@@ -17,6 +17,7 @@ import (
 	"SleepJiraBot/internal/crypto"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
+	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/scheduler"
 	"SleepJiraBot/internal/storage"
@@ -98,9 +99,11 @@ func main() {
 		log.Warn().Str("value", cfg.PollInterval).Msg("invalid POLL_INTERVAL, using default 2m")
 		pollInterval = 2 * time.Minute
 	}
-	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval)
+	dedup := notifydedup.New(pollInterval + 1*time.Minute)
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log)
+	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, dedup)
+
+	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
 
 	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, bot.API(), log)
 	callbackServer.Handle("/webhook", webhookHandler)

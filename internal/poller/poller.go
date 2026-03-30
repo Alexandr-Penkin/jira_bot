@@ -11,6 +11,7 @@ import (
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
+	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 )
 
@@ -31,9 +32,10 @@ type Poller struct {
 	tgAPI    *tgbotapi.BotAPI
 	log      zerolog.Logger
 	interval time.Duration
+	dedup    *notifydedup.Guard
 }
 
-func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval time.Duration) *Poller {
+func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval time.Duration, dedup *notifydedup.Guard) *Poller {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
@@ -44,6 +46,7 @@ func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI 
 		tgAPI:    tgAPI,
 		log:      log,
 		interval: interval,
+		dedup:    dedup,
 	}
 }
 
@@ -138,6 +141,14 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				continue
 			}
 			notified[sub.TelegramChatID][issue.Key] = true
+
+			if !p.dedup.Allow(sub.TelegramChatID, issue.Key) {
+				p.log.Debug().
+					Int64("chat_id", sub.TelegramChatID).
+					Str("issue", issue.Key).
+					Msg("poller: skipping duplicate notification")
+				continue
+			}
 
 			p.notifySubscription(sub, issue, user.JiraSiteURL, since)
 		}

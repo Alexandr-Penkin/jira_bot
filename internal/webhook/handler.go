@@ -20,6 +20,7 @@ import (
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/locale"
+	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 )
 
@@ -39,9 +40,10 @@ type Handler struct {
 	sem           chan struct{}
 	eventQueue    chan Event
 	wg            sync.WaitGroup
+	dedup         *notifydedup.Guard
 }
 
-func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger) *Handler {
+func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup *notifydedup.Guard) *Handler {
 	h := &Handler{
 		subRepo:       subRepo,
 		userRepo:      userRepo,
@@ -50,6 +52,7 @@ func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, t
 		log:           log,
 		sem:           make(chan struct{}, maxConcurrentJobs),
 		eventQueue:    make(chan Event, eventQueueSize),
+		dedup:         dedup,
 	}
 
 	return h
@@ -207,6 +210,16 @@ func (h *Handler) processEvent(event Event) {
 		if sent[matched[i].TelegramChatID] {
 			continue
 		}
+
+		if issueKey != "" && !h.dedup.Allow(matched[i].TelegramChatID, issueKey) {
+			h.log.Debug().
+				Int64("chat_id", matched[i].TelegramChatID).
+				Str("issue", issueKey).
+				Msg("webhook: skipping duplicate notification")
+			sent[matched[i].TelegramChatID] = true
+			continue
+		}
+
 		sent[matched[i].TelegramChatID] = true
 
 		text := h.formatNotification(event, eventType)
@@ -219,15 +232,6 @@ func (h *Handler) processEvent(event Event) {
 				Err(err).
 				Int64("chat_id", matched[i].TelegramChatID).
 				Msg("failed to send notification")
-		}
-	}
-
-	// Update LastPolledAt on all matched subscriptions so the poller
-	// does not re-notify for the same event.
-	now := time.Now().Unix()
-	for i := range matched {
-		if err := h.subRepo.UpdateLastPolled(ctx, matched[i].ID, now); err != nil {
-			h.log.Error().Err(err).Msg("webhook: failed to update last_polled_at")
 		}
 	}
 }
