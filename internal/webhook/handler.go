@@ -221,6 +221,15 @@ func (h *Handler) processEvent(event Event) {
 				Msg("failed to send notification")
 		}
 	}
+
+	// Update LastPolledAt on all matched subscriptions so the poller
+	// does not re-notify for the same event.
+	now := time.Now().Unix()
+	for i := range matched {
+		if err := h.subRepo.UpdateLastPolled(ctx, matched[i].ID, now); err != nil {
+			h.log.Error().Err(err).Msg("webhook: failed to update last_polled_at")
+		}
+	}
 }
 
 // mentionPattern matches Jira Cloud mention format: [~accountid:XXXXXXXXX]

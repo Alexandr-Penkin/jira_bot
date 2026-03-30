@@ -109,6 +109,10 @@ func main() {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		_, _ = w.Write(web.LogoJPEG())
 	})
+	callbackServer.HandleFunc("/privacy", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(web.PrivacyHTML())
+	})
 	callbackServer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)

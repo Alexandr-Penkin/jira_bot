@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — SleepJiraBot</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --accent: #4f8ff7;
+            --text: #e1e4ed;
+            --text-dim: #8b8fa3;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+
+        .container {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 48px 24px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .updated {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-bottom: 32px;
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 32px;
+            margin-bottom: 12px;
+        }
+
+        p, ul {
+            color: var(--text-dim);
+            margin-bottom: 16px;
+        }
+
+        ul {
+            padding-left: 24px;
+        }
+
+        li {
+            margin-bottom: 6px;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .back {
+            display: inline-block;
+            margin-top: 32px;
+            color: var(--accent);
+            font-size: 0.95rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Privacy Policy</h1>
+        <p class="updated">Last updated: March 30, 2026</p>
+
+        <h2>1. Introduction</h2>
+        <p>SleepJiraBot ("the Bot", "we", "our") is a Telegram bot that integrates with Atlassian Jira Cloud. This Privacy Policy describes how we collect, use, and protect your information when you use the Bot.</p>
+
+        <h2>2. Information We Collect</h2>
+        <p>When you use the Bot, we collect and store the following data:</p>
+        <ul>
+            <li><strong>Telegram User ID</strong> — to identify your account within the Bot.</li>
+            <li><strong>Jira OAuth 2.0 Tokens</strong> (access token and refresh token) — to authenticate API requests to your Jira Cloud instance on your behalf.</li>
+            <li><strong>Jira Cloud ID and Account ID</strong> — to associate your Telegram account with your Atlassian account.</li>
+            <li><strong>Subscription preferences</strong> — projects, issues, or filters you choose to subscribe to.</li>
+            <li><strong>Scheduled report configurations</strong> — JQL queries and cron expressions you configure.</li>
+            <li><strong>Language preference</strong> — your chosen interface language (English or Russian).</li>
+        </ul>
+
+        <h2>3. Information We Do NOT Collect</h2>
+        <ul>
+            <li>We do not collect or store your Jira password.</li>
+            <li>We do not collect or store your Telegram messages beyond bot commands.</li>
+            <li>We do not collect any personal data beyond what is listed above.</li>
+            <li>We do not use cookies or tracking technologies.</li>
+        </ul>
+
+        <h2>4. How We Use Your Information</h2>
+        <p>Your information is used solely to:</p>
+        <ul>
+            <li>Authenticate with Jira Cloud on your behalf via OAuth 2.0.</li>
+            <li>Deliver Jira issue notifications and updates to your Telegram chat.</li>
+            <li>Execute scheduled reports and subscription queries.</li>
+        </ul>
+
+        <h2>5. Data Storage and Security</h2>
+        <ul>
+            <li>All Jira OAuth tokens are encrypted using <strong>AES-256-GCM</strong> before being stored in the database.</li>
+            <li>Data is stored in a MongoDB database accessible only from the internal network.</li>
+            <li>All external communications are encrypted via <strong>HTTPS/TLS</strong>.</li>
+            <li>The Bot uses OAuth 2.0 with minimal required scopes and does not request more permissions than necessary.</li>
+        </ul>
+
+        <h2>6. Data Sharing</h2>
+        <p>We do not sell, trade, or share your data with any third parties. Your data is only transmitted to:</p>
+        <ul>
+            <li><strong>Atlassian Jira Cloud API</strong> — to fulfill your requests (viewing issues, updating statuses, etc.).</li>
+            <li><strong>Telegram Bot API</strong> — to send you messages and notifications.</li>
+        </ul>
+
+        <h2>7. Data Retention and Deletion</h2>
+        <p>Your data is retained as long as your account is connected to the Bot. You can delete all your data at any time by using the <code>/disconnect</code> command in Telegram, which will:</p>
+        <ul>
+            <li>Revoke and delete your Jira OAuth tokens.</li>
+            <li>Remove all your subscriptions and scheduled reports.</li>
+            <li>Delete your user record from the database.</li>
+        </ul>
+
+        <h2>8. Atlassian Marketplace Compliance</h2>
+        <p>This Bot accesses Jira Cloud via the Atlassian API using OAuth 2.0 (3LO). It complies with:</p>
+        <ul>
+            <li><a href="https://developer.atlassian.com/platform/marketplace/dc-apps-security-and-trust/">Atlassian Security Requirements</a></li>
+            <li><a href="https://www.atlassian.com/legal/privacy-policy">Atlassian Privacy Policy</a></li>
+        </ul>
+
+        <h2>9. Your Rights</h2>
+        <p>You have the right to:</p>
+        <ul>
+            <li>Access the data we hold about you (via <code>/me</code> command).</li>
+            <li>Delete all your data (via <code>/disconnect</code> command).</li>
+            <li>Revoke the Bot's access to your Jira account at any time through your <a href="https://id.atlassian.com/manage-profile/apps">Atlassian account settings</a>.</li>
+        </ul>
+
+        <h2>10. Changes to This Policy</h2>
+        <p>We may update this Privacy Policy from time to time. Changes will be reflected on this page with an updated "Last updated" date.</p>
+
+        <h2>11. Contact</h2>
+        <p>If you have questions about this Privacy Policy, please open an issue on <a href="https://github.com/Alexandr-Penkin/jira_bot">GitHub</a> or contact us via Telegram.</p>
+
+        <a class="back" href="/jira-bot/">&larr; Back to SleepJiraBot</a>
+    </div>
+</body>
+</html>

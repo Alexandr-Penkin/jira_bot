@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	defaultPollInterval    = 2 * time.Minute
-	pollTimeout            = 30 * time.Second
-	pollMaxResults         = 50
-	mentionCommentMax      = 10
-	mentionCommentTimeout  = 10 * time.Second
+	defaultPollInterval   = 2 * time.Minute
+	pollTimeout           = 30 * time.Second
+	pollMaxResults        = 50
+	mentionCommentMax     = 10
+	mentionCommentTimeout = 10 * time.Second
 )
 
 // Poller periodically queries the Jira API for issue changes
@@ -102,6 +102,10 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 		}
 
 		since := p.sinceTimestamp(sub)
+		// Truncate to minute boundary so JQL and changelog filtering use the
+		// same precision. JQL only supports minute-level timestamps, so without
+		// this the changelog filter can be stricter and discard valid entries.
+		since = since - (since % 60)
 		sinceStr := time.Unix(since, 0).Format("2006-01-02 15:04")
 		fullJQL := fmt.Sprintf("%s AND updated >= %q ORDER BY updated ASC", jql, sinceStr)
 
@@ -130,11 +134,10 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			if notified[sub.TelegramChatID] == nil {
 				notified[sub.TelegramChatID] = make(map[string]bool)
 			}
-			key := fmt.Sprintf("%s:%s", sub.SubscriptionType, issue.Key)
-			if notified[sub.TelegramChatID][key] {
+			if notified[sub.TelegramChatID][issue.Key] {
 				continue
 			}
-			notified[sub.TelegramChatID][key] = true
+			notified[sub.TelegramChatID][issue.Key] = true
 
 			p.notifySubscription(sub, issue, user.JiraSiteURL, since)
 		}
@@ -285,6 +288,8 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 }
 
 // recentChanges extracts changelog entries since the given timestamp.
+// If no recent entries match but the changelog is non-empty, the author
+// of the most recent history entry is returned as a fallback.
 func recentChanges(issue *jira.Issue, sinceTS int64) (*jira.JiraUser, []jira.ChangeItem) {
 	if issue.Changelog == nil {
 		return nil, nil
@@ -306,6 +311,13 @@ func recentChanges(issue *jira.Issue, sinceTS int64) (*jira.JiraUser, []jira.Cha
 			author = h.Author
 		}
 		items = append(items, h.Items...)
+	}
+
+	// Fallback: if no recent entries matched, use the latest changelog
+	// entry's author so we never show "Someone" when data is available.
+	if author == nil && len(issue.Changelog.Histories) > 0 {
+		last := issue.Changelog.Histories[len(issue.Changelog.Histories)-1]
+		author = last.Author
 	}
 
 	return author, items
