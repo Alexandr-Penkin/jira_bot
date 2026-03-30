@@ -410,7 +410,7 @@ func (c *Client) SearchIssuesWithChangelog(ctx context.Context, user *storage.Us
 	params := url.Values{
 		"jql":        {jql},
 		"maxResults": {fmt.Sprintf("%d", maxResults)},
-		"fields":     {"summary,status,priority,assignee,reporter,issuetype,project"},
+		"fields":     {"summary,status,priority,assignee,reporter,issuetype,project,updated"},
 		"expand":     {"changelog"},
 	}
 	path := "/search/jql?" + params.Encode()

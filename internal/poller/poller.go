@@ -104,12 +104,11 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			continue
 		}
 
-		since := p.sinceTimestamp(sub)
-		// Truncate to minute boundary so JQL and changelog filtering use the
-		// same precision. JQL only supports minute-level timestamps, so without
-		// this the changelog filter can be stricter and discard valid entries.
-		since = since - (since % 60)
-		sinceStr := time.Unix(since, 0).Format("2006-01-02 15:04")
+		sinceTS := p.sinceTimestamp(sub)
+		// JQL only supports minute precision, so truncate down for the query.
+		// The exact-second filtering happens below using issue.Fields.Updated.
+		sinceMinute := sinceTS - (sinceTS % 60)
+		sinceStr := time.Unix(sinceMinute, 0).Format("2006-01-02 15:04")
 		fullJQL := fmt.Sprintf("%s AND updated >= %q ORDER BY updated ASC", jql, sinceStr)
 
 		pollCtx, cancel := context.WithTimeout(ctx, pollTimeout)
@@ -124,12 +123,23 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			continue
 		}
 
+		sinceTime := time.Unix(sinceTS, 0)
 		for j := range result.Issues {
 			issue := &result.Issues[j]
 
+			// JQL has minute precision so it returns issues from the
+			// truncated window. Filter precisely using the issue's Updated
+			// timestamp to skip issues already processed in prior cycles.
+			if issue.Fields.Updated != "" {
+				updatedAt, parseErr := time.Parse("2006-01-02T15:04:05.000-0700", issue.Fields.Updated)
+				if parseErr == nil && !updatedAt.After(sinceTime) {
+					continue
+				}
+			}
+
 			// For mention subscriptions, only notify if user is actually mentioned in recent comments.
 			if sub.SubscriptionType == storage.SubTypeMyMentions {
-				if !p.isUserMentionedInComments(ctx, user, issue.Key, since) {
+				if !p.isUserMentionedInComments(ctx, user, issue.Key, sinceTS) {
 					continue
 				}
 			}
@@ -150,7 +160,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				continue
 			}
 
-			p.notifySubscription(sub, issue, user.JiraSiteURL, since)
+			p.notifySubscription(sub, issue, user.JiraSiteURL, sinceTS)
 		}
 
 		if err := p.subRepo.UpdateLastPolled(ctx, sub.ID, now); err != nil {
