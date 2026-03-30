@@ -1,0 +1,13 @@
+{$DOMAIN:localhost} {
+	handle /jira-bot/* {
+		uri strip_prefix /jira-bot
+		reverse_proxy bot:8080
+	}
+
+	handle /jira-bot {
+		uri strip_prefix /jira-bot
+		reverse_proxy bot:8080
+	}
+
+	respond 404
+}

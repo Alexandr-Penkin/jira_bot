@@ -9,4 +9,6 @@ bot
 *.out
 bin/
 .idea/
+.claude/
+CLAUDE.md
 vendor/

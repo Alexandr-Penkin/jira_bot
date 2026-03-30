@@ -70,6 +70,11 @@ func (cs *CallbackServer) Handle(pattern string, handler http.Handler) {
 	cs.mux.Handle(pattern, handler)
 }
 
+// HandleFunc registers a function as a handler on the callback server's mux.
+func (cs *CallbackServer) HandleFunc(pattern string, handler http.HandlerFunc) {
+	cs.mux.HandleFunc(pattern, handler)
+}
+
 func (cs *CallbackServer) Start() error {
 	cs.log.Info().Str("addr", cs.server.Addr).Msg("starting OAuth callback server")
 	return cs.server.ListenAndServe()
