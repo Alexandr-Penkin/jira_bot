@@ -1,0 +1,74 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+    - unconvert
+    - unparam
+    - bodyclose
+    - noctx
+    - prealloc
+    - gocritic
+    - revive
+    - errname
+    - errorlint
+    - nilerr
+    - exhaustive
+    - gosec
+    - dupl
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      settings:
+        hugeParam:
+          sizeThreshold: 128
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-naming
+        - name: increment-decrement
+        - name: var-naming
+        - name: range
+        - name: receiver-naming
+        - name: indent-error-flow
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        - G101
+        - G104
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - dupl
+          - gosec
+          - unparam
+          - noctx
+          - errcheck
+          - gocritic
+      - path: internal/locale/
+        linters:
+          - dupl

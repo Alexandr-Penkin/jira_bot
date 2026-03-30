@@ -1,0 +1,12 @@
+.env
+bot
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+.idea/
+vendor/
