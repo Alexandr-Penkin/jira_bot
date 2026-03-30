@@ -1,5 +1,5 @@
 .env
-bot
+/bot
 *.exe
 *.exe~
 *.dll
