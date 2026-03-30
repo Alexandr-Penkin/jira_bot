@@ -99,7 +99,7 @@ func main() {
 		log.Warn().Str("value", cfg.PollInterval).Msg("invalid POLL_INTERVAL, using default 2m")
 		pollInterval = 2 * time.Minute
 	}
-	dedup := notifydedup.New(pollInterval + 1*time.Minute)
+	dedup := notifydedup.New(3 * pollInterval)
 
 	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, dedup)
 

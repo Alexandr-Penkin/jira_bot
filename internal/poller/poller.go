@@ -192,11 +192,11 @@ func (p *Poller) buildJQL(sub *storage.Subscription) string {
 }
 
 func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
-	since := time.Now().Add(-p.interval).Unix()
-	if sub.LastPolledAt > 0 && sub.LastPolledAt < since {
-		since = sub.LastPolledAt
+	fallback := time.Now().Add(-p.interval).Unix()
+	if sub.LastPolledAt > 0 {
+		return sub.LastPolledAt
 	}
-	return since
+	return fallback
 }
 
 func (p *Poller) notifySubscription(sub *storage.Subscription, issue *jira.Issue, siteURL string, sinceTS int64) {
