@@ -17,6 +17,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - caddy_net
 
   mongo:
     image: mongo:7
@@ -31,23 +33,9 @@ services:
       retries: 3
       start_period: 10s
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      DOMAIN: ${DOMAIN:-apenkin.pro}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - bot
-
 volumes:
   mongo_data:
-  caddy_data:
-  caddy_config:
+
+networks:
+  caddy_net:
+    external: true
