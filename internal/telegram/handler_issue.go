@@ -148,6 +148,55 @@ func (h *Handler) handleAssign(ctx context.Context, chatID, userID int64, issueK
 	return tgbotapi.NewMessage(chatID, locale.T(lang, "assign.success", issueKey))
 }
 
+func (h *Handler) handleJiraLink(ctx context.Context, chatID, userID int64, issueKey string) {
+	lang := h.getLang(ctx, userID)
+
+	user, err := h.requireAuth(ctx, userID)
+	if err != nil {
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected")))
+		return
+	}
+
+	issue, err := h.jiraAPI.GetIssue(ctx, user, issueKey)
+	if err != nil {
+		h.log.Error().Err(err).Str("issue", issueKey).Msg("failed to get issue from link")
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "issue.failed", issueKey)))
+		return
+	}
+
+	msg := tgbotapi.NewMessage(chatID, formatIssue(lang, issue, user.JiraSiteURL))
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	msg.DisableWebPagePreview = true
+	msg.ReplyMarkup = issueActionsKeyboard(lang, issueKey)
+	h.sendMessage(msg)
+}
+
+func (h *Handler) handleIssueActionCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
+	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
+
+	if len(parts) < 3 {
+		return
+	}
+
+	action := parts[1]
+	issueKey := parts[2]
+	chatID := cq.Message.Chat.ID
+	userID := cq.From.ID
+	lang := h.getLang(ctx, userID)
+
+	switch action {
+	case "comment":
+		h.states.Set(userID, "comment_text", map[string]string{"issue_key": issueKey})
+		h.sendPrompt(chatID, locale.T(lang, "comment.enter_text", issueKey), lang)
+	case "transition":
+		h.sendMessage(h.handleTransition(ctx, chatID, userID, issueKey))
+	case "assign":
+		h.sendMessage(withMenuButton(h.handleAssign(ctx, chatID, userID, issueKey), lang))
+	case "watch":
+		h.handleSubIssueInput(ctx, chatID, userID, issueKey, lang)
+	}
+}
+
 func formatIssue(lang locale.Lang, issue *jira.Issue, siteURL string) string {
 	f := issue.Fields
 

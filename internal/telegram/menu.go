@@ -110,6 +110,22 @@ func reportsMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
+func issueActionsKeyboard(lang locale.Lang, issueKey string) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.comment"), "issue_action:comment:"+issueKey),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.transition"), "issue_action:transition:"+issueKey),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.assign_to_me"), "issue_action:assign:"+issueKey),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.watch_issue"), "issue_action:watch:"+issueKey),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.menu"), "m:main"),
+		),
+	)
+}
+
 func cancelKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(

@@ -151,6 +151,7 @@ var ru = map[string]string{
 	"btn.sub_my_watched":   "👁 Задачи под наблюдением",
 	"btn.sub_project":      "📁 Обновления проекта",
 	"btn.sub_issue":        "🔔 Обновления задачи",
+	"btn.watch_issue":      "👁 Следить",
 	"btn.sub_filter":       "🔍 Обновления по фильтру",
 
 	"sub.choose_type":     "*Выберите тип подписки:*",

@@ -151,6 +151,7 @@ var en = map[string]string{
 	"btn.sub_my_watched":   "👁 Issues I Watch",
 	"btn.sub_project":      "📁 Project Updates",
 	"btn.sub_issue":        "🔔 Issue Updates",
+	"btn.watch_issue":      "👁 Watch",
 	"btn.sub_filter":       "🔍 Filter Updates",
 
 	"sub.choose_type":     "*Choose subscription type:*",

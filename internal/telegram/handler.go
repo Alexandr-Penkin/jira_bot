@@ -21,6 +21,7 @@ import (
 )
 
 var issueKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9]+-\d+$`)
+var jiraURLRe = regexp.MustCompile(`https?://[a-zA-Z0-9._-]+\.atlassian\.net/browse/([A-Z][A-Z0-9]+-\d+)`)
 
 const (
 	listMaxResults     = 15
@@ -312,6 +313,8 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDailyJQLEdit(ctx, cq, "daily_jql_plan", "daily_jql.enter_plan")
 	case "djql_reset":
 		h.handleDailyJQLReset(ctx, cq)
+	case "issue_action":
+		h.handleIssueActionCallback(ctx, cq, parts)
 	default:
 		cb := tgbotapi.NewCallback(cq.ID, "Unknown action")
 		_, _ = h.api.Request(cb)
@@ -460,12 +463,17 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	userID := message.From.ID
 	chatID := message.Chat.ID
 	step, data := h.states.Get(userID)
-	if step == "" {
-		return
-	}
 
 	text := strings.TrimSpace(message.Text)
 	if text == "" {
+		return
+	}
+
+	if step == "" {
+		if match := jiraURLRe.FindStringSubmatch(text); match != nil {
+			issueKey := match[1]
+			h.handleJiraLink(ctx, message.Chat.ID, userID, issueKey)
+		}
 		return
 	}
 
