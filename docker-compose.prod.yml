@@ -22,19 +22,6 @@ services:
       - internal
       - caddy_net
 
-  mongo:
-    image: mongo:7
-    restart: unless-stopped
-    # No ports exposed — only accessible from internal network
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
 volumes:
   mongo_data:
 
