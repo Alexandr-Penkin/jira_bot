@@ -17,7 +17,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    container_name: bot
     networks:
+      - default
       - caddy_net
 
   mongo:
