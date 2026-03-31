@@ -18,6 +18,9 @@ services:
       retries: 3
       start_period: 10s
     container_name: bot
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     networks:
       - internal
       - caddy_net
@@ -27,5 +30,6 @@ volumes:
 
 networks:
   internal:
+    enable_ipv6: false
   caddy_net:
     external: true
