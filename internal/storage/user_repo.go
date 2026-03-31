@@ -14,24 +14,25 @@ import (
 )
 
 type User struct {
-	ID               bson.ObjectID `bson:"_id,omitempty"`
-	TelegramUserID   int64         `bson:"telegram_user_id"`
-	JiraCloudID      string        `bson:"jira_cloud_id,omitempty"`
-	JiraAccountID    string        `bson:"jira_account_id,omitempty"`
-	JiraSiteURL      string        `bson:"jira_site_url,omitempty"`
-	AccessToken      string        `bson:"access_token,omitempty"`
-	RefreshToken     string        `bson:"refresh_token,omitempty"`
-	TokenExpiresAt   time.Time     `bson:"token_expires_at,omitempty"`
-	Language         string        `bson:"language,omitempty"`
-	DefaultProject   string        `bson:"default_project,omitempty"`
-	DefaultBoardID   int           `bson:"default_board_id,omitempty"`
-	SprintIssueTypes []string      `bson:"sprint_issue_types,omitempty"`
-	AssigneeFieldID  string        `bson:"assignee_field_id,omitempty"`
-	DailyDoneJQL     string        `bson:"daily_done_jql,omitempty"`
-	DailyDoingJQL    string        `bson:"daily_doing_jql,omitempty"`
-	DailyPlanJQL     string        `bson:"daily_plan_jql,omitempty"`
-	CreatedTS        int64         `bson:"created_ts"`
-	ModifiedTS       int64         `bson:"modified_ts"`
+	ID                 bson.ObjectID `bson:"_id,omitempty"`
+	TelegramUserID     int64         `bson:"telegram_user_id"`
+	JiraCloudID        string        `bson:"jira_cloud_id,omitempty"`
+	JiraAccountID      string        `bson:"jira_account_id,omitempty"`
+	JiraSiteURL        string        `bson:"jira_site_url,omitempty"`
+	AccessToken        string        `bson:"access_token,omitempty"`
+	RefreshToken       string        `bson:"refresh_token,omitempty"`
+	TokenExpiresAt     time.Time     `bson:"token_expires_at,omitempty"`
+	Language           string        `bson:"language,omitempty"`
+	DefaultProject     string        `bson:"default_project,omitempty"`
+	DefaultBoardID     int           `bson:"default_board_id,omitempty"`
+	SprintIssueTypes   []string      `bson:"sprint_issue_types,omitempty"`
+	AssigneeFieldID    string        `bson:"assignee_field_id,omitempty"`
+	StoryPointsFieldID string        `bson:"story_points_field_id,omitempty"`
+	DailyDoneJQL       string        `bson:"daily_done_jql,omitempty"`
+	DailyDoingJQL      string        `bson:"daily_doing_jql,omitempty"`
+	DailyPlanJQL       string        `bson:"daily_plan_jql,omitempty"`
+	CreatedTS          int64         `bson:"created_ts"`
+	ModifiedTS         int64         `bson:"modified_ts"`
 }
 
 type UserRepo struct {
@@ -164,6 +165,18 @@ func (r *UserRepo) SetAssigneeField(ctx context.Context, telegramUserID int64, f
 		"$set": bson.M{
 			"assignee_field_id": fieldID,
 			"modified_ts":       time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+func (r *UserRepo) SetStoryPointsField(ctx context.Context, telegramUserID int64, fieldID string) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"story_points_field_id": fieldID,
+			"modified_ts":           time.Now().Unix(),
 		},
 	}
 	_, err := r.coll.UpdateOne(ctx, filter, update)

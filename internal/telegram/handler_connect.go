@@ -160,6 +160,12 @@ func (h *Handler) handleMe(ctx context.Context, chatID, userID int64) tgbotapi.M
 	}
 	text += locale.T(lang, "assigneefield.current", format.EscapeMarkdown(assigneeFieldLabel))
 
+	spFieldLabel := locale.T(lang, "spfield.default")
+	if user.StoryPointsFieldID != "" {
+		spFieldLabel = user.StoryPointsFieldID
+	}
+	text += locale.T(lang, "spfield.current", format.EscapeMarkdown(spFieldLabel))
+
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	return msg

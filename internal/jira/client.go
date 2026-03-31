@@ -144,7 +144,7 @@ func (c *Client) SearchIssues(ctx context.Context, user *storage.User, jql strin
 // SearchIssuesWithStoryPoints searches issues and extracts story points from custom fields.
 // If assigneeFieldID is not empty, it also extracts the custom assignee field.
 func (c *Client) SearchIssuesWithStoryPoints(ctx context.Context, user *storage.User, jql string, maxResults int, assigneeFieldID string) (*SearchResult, error) {
-	fields := "summary,status,priority,assignee,issuetype,duedate,project,story_points,customfield_10016"
+	fields := storyPointsQueryFields(user.StoryPointsFieldID)
 	if assigneeFieldID != "" {
 		fields += "," + assigneeFieldID
 	}
@@ -193,7 +193,7 @@ func (c *Client) SearchIssuesWithStoryPoints(ctx context.Context, user *storage.
 
 		var extra map[string]json.RawMessage
 		if err = json.Unmarshal(ri.Fields, &extra); err == nil {
-			result.Issues[i].Fields.StoryPoints = extractStoryPoints(extra)
+			result.Issues[i].Fields.StoryPoints = extractStoryPoints(extra, user.StoryPointsFieldID)
 			if assigneeFieldID != "" {
 				result.Issues[i].Fields.CustomAssignee = extractUserField(extra, assigneeFieldID)
 			}
@@ -203,8 +203,30 @@ func (c *Client) SearchIssuesWithStoryPoints(ctx context.Context, user *storage.
 	return result, nil
 }
 
-func extractStoryPoints(fields map[string]json.RawMessage) *float64 {
-	for _, key := range []string{"story_points", "customfield_10016"} {
+// storyPointsQueryFields returns the fields parameter for story points queries.
+// If the user configured a specific field, only that field is requested.
+// Otherwise, common field names are requested for auto-detection.
+func storyPointsQueryFields(spFieldID string) string {
+	base := "summary,status,priority,assignee,issuetype,duedate,project"
+	if spFieldID != "" {
+		return base + "," + spFieldID
+	}
+	return base + ",story_points,story_point_estimate,customfield_10016"
+}
+
+func extractStoryPoints(fields map[string]json.RawMessage, spFieldID string) *float64 {
+	if spFieldID != "" {
+		raw, ok := fields[spFieldID]
+		if !ok || string(raw) == "null" {
+			return nil
+		}
+		var sp float64
+		if json.Unmarshal(raw, &sp) == nil {
+			return &sp
+		}
+		return nil
+	}
+	for _, key := range []string{"story_points", "story_point_estimate", "customfield_10016"} {
 		raw, ok := fields[key]
 		if !ok || string(raw) == "null" {
 			continue
@@ -343,7 +365,7 @@ func (c *Client) AssignIssue(ctx context.Context, user *storage.User, issueKey, 
 // SearchIssuesForSprintReport searches issues with both story points and changelog.
 // Combines the functionality of SearchIssuesWithStoryPoints and SearchIssuesWithChangelog.
 func (c *Client) SearchIssuesForSprintReport(ctx context.Context, user *storage.User, jql string, maxResults int, assigneeFieldID string) (*SearchResult, error) {
-	fields := "summary,status,priority,assignee,issuetype,duedate,project,story_points,customfield_10016"
+	fields := storyPointsQueryFields(user.StoryPointsFieldID)
 	if assigneeFieldID != "" {
 		fields += "," + assigneeFieldID
 	}
@@ -395,7 +417,7 @@ func (c *Client) SearchIssuesForSprintReport(ctx context.Context, user *storage.
 
 		var extra map[string]json.RawMessage
 		if err = json.Unmarshal(ri.Fields, &extra); err == nil {
-			result.Issues[i].Fields.StoryPoints = extractStoryPoints(extra)
+			result.Issues[i].Fields.StoryPoints = extractStoryPoints(extra, user.StoryPointsFieldID)
 			if assigneeFieldID != "" {
 				result.Issues[i].Fields.CustomAssignee = extractUserField(extra, assigneeFieldID)
 			}

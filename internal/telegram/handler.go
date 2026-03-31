@@ -300,6 +300,10 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleAssigneeFieldCallback(ctx, cq, parts)
 	case "af_reset":
 		h.handleAssigneeFieldReset(ctx, cq)
+	case "sp_select":
+		h.handleStoryPointsFieldCallback(ctx, cq, parts)
+	case "sp_reset":
+		h.handleStoryPointsFieldReset(ctx, cq)
 	case "djql_done":
 		h.handleDailyJQLEdit(ctx, cq, "daily_jql_done", "daily_jql.enter_done")
 	case "djql_doing":
@@ -438,6 +442,8 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.handleIssueTypesStart(ctx, chatID, userID)
 	case "assigneefield":
 		h.handleAssigneeFieldStart(ctx, chatID, userID)
+	case "spfield":
+		h.handleStoryPointsFieldStart(ctx, chatID, userID)
 	case "dailyjql":
 		h.handleDailyJQLStart(ctx, chatID, userID)
 	case "lang":
