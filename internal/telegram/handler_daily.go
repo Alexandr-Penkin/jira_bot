@@ -33,15 +33,18 @@ func (h *Handler) handleDaily(ctx context.Context, chatID, userID int64) tgbotap
 	doneJQL := user.DailyDoneJQL
 	if doneJQL == "" {
 		doneJQL = fmt.Sprintf(
-			"status changed BY currentUser() AFTER %q ORDER BY updated DESC",
+			"\"Developer[User Picker (single user)]\" = currentUser() AND updated >= %q AND status IN (Closed, \"Code review\", \"Ready for testing\", \"Ready for release\") ORDER BY updated DESC",
 			yesterday,
 		)
 	}
 	doingJQL := user.DailyDoingJQL
 	if doingJQL == "" {
-		doingJQL = "assignee=currentUser() AND statusCategory=\"In Progress\" ORDER BY updated DESC"
+		doingJQL = "\"Developer[User Picker (single user)]\" = currentUser() AND status = \"In Progress\" ORDER BY updated DESC"
 	}
 	planJQL := user.DailyPlanJQL
+	if planJQL == "" {
+		planJQL = "assignee = currentUser() AND status = \"Ready for development\" AND type IN (\"Dev Task\", Bug) ORDER BY updated DESC"
+	}
 
 	return h.buildDailyMessage(ctx, chatID, lang, user, "", doneJQL, doingJQL, planJQL)
 }
