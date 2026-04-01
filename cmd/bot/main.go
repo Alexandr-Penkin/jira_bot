@@ -96,12 +96,17 @@ func main() {
 
 	pollInterval, err := time.ParseDuration(cfg.PollInterval)
 	if err != nil {
-		log.Warn().Str("value", cfg.PollInterval).Msg("invalid POLL_INTERVAL, using default 2m")
-		pollInterval = 2 * time.Minute
+		log.Warn().Str("value", cfg.PollInterval).Msg("invalid POLL_INTERVAL, using default 30s")
+		pollInterval = 30 * time.Second
 	}
-	dedup := notifydedup.New(3 * pollInterval)
+	batchWindow, err := time.ParseDuration(cfg.BatchWindow)
+	if err != nil {
+		log.Warn().Str("value", cfg.BatchWindow).Msg("invalid BATCH_WINDOW, using default 1m")
+		batchWindow = 1 * time.Minute
+	}
+	dedup := notifydedup.New(3 * batchWindow)
 
-	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, dedup)
+	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, batchWindow, dedup)
 
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
 

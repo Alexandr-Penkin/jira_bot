@@ -16,43 +16,75 @@ import (
 )
 
 const (
-	defaultPollInterval   = 2 * time.Minute
+	defaultPollInterval   = 30 * time.Second
+	defaultBatchWindow    = 1 * time.Minute
 	pollTimeout           = 30 * time.Second
 	pollMaxResults        = 50
 	mentionCommentMax     = 10
 	mentionCommentTimeout = 10 * time.Second
 )
 
-// Poller periodically queries the Jira API for issue changes
-// and sends notifications to subscribers.
-type Poller struct {
-	subRepo  *storage.SubscriptionRepo
-	userRepo *storage.UserRepo
-	jiraAPI  *jira.Client
-	tgAPI    *tgbotapi.BotAPI
-	log      zerolog.Logger
-	interval time.Duration
-	dedup    *notifydedup.Guard
+// mergedChange tracks a field change, collapsing intermediate states
+// (e.g. Status: Open → In Progress → Done becomes Status: Open → Done).
+type mergedChange struct {
+	Field      string
+	FromString string
+	ToString   string
 }
 
-func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval time.Duration, dedup *notifydedup.Guard) *Poller {
+// pendingNotification accumulates changes for a single issue
+// destined for a specific chat before sending one merged notification.
+type pendingNotification struct {
+	chatID    int64
+	issueKey  string
+	siteURL   string
+	issue     *jira.Issue
+	authors   map[string]string        // accountID -> displayName
+	changes   map[string]*mergedChange // field -> merged change
+	firstSeen time.Time
+}
+
+// Poller periodically queries the Jira API for issue changes
+// and sends notifications to subscribers. Changes for the same issue
+// are accumulated during batchWindow before sending one merged notification.
+type Poller struct {
+	subRepo     *storage.SubscriptionRepo
+	userRepo    *storage.UserRepo
+	jiraAPI     *jira.Client
+	tgAPI       *tgbotapi.BotAPI
+	log         zerolog.Logger
+	interval    time.Duration
+	batchWindow time.Duration
+	dedup       *notifydedup.Guard
+	pending     map[string]*pendingNotification
+}
+
+func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval time.Duration, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
+	if batchWindow <= 0 {
+		batchWindow = defaultBatchWindow
+	}
 	return &Poller{
-		subRepo:  subRepo,
-		userRepo: userRepo,
-		jiraAPI:  jiraAPI,
-		tgAPI:    tgAPI,
-		log:      log,
-		interval: interval,
-		dedup:    dedup,
+		subRepo:     subRepo,
+		userRepo:    userRepo,
+		jiraAPI:     jiraAPI,
+		tgAPI:       tgAPI,
+		log:         log,
+		interval:    interval,
+		batchWindow: batchWindow,
+		dedup:       dedup,
+		pending:     make(map[string]*pendingNotification),
 	}
 }
 
 // Start begins the polling loop. It blocks until ctx is cancelled.
 func (p *Poller) Start(ctx context.Context) {
-	p.log.Info().Dur("interval", p.interval).Msg("poller started")
+	p.log.Info().
+		Dur("interval", p.interval).
+		Dur("batch_window", p.batchWindow).
+		Msg("poller started")
 
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -60,10 +92,12 @@ func (p *Poller) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			p.flushAllPending()
 			p.log.Info().Msg("poller stopped")
 			return
 		case <-ticker.C:
 			p.poll(ctx)
+			p.flushPending()
 		}
 	}
 }
@@ -144,6 +178,13 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				}
 			}
 
+			// If already accumulating changes for this issue+chat, just merge.
+			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
+			if _, inPending := p.pending[pendingKey]; inPending {
+				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS)
+				continue
+			}
+
 			if notified[sub.TelegramChatID] == nil {
 				notified[sub.TelegramChatID] = make(map[string]bool)
 			}
@@ -160,7 +201,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				continue
 			}
 
-			p.notifySubscription(sub, issue, user.JiraSiteURL, sinceTS)
+			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS)
 		}
 
 		if err := p.subRepo.UpdateLastPolled(ctx, sub.ID, now); err != nil {
@@ -209,36 +250,107 @@ func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
 	return fallback
 }
 
-func (p *Poller) notifySubscription(sub *storage.Subscription, issue *jira.Issue, siteURL string, sinceTS int64) {
-	issueURL := fmt.Sprintf("%s/browse/%s", siteURL, issue.Key)
+func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64) {
+	key := fmt.Sprintf("%d:%s", chatID, issue.Key)
 
 	author, changes := recentChanges(issue, sinceTS)
 
-	var sb strings.Builder
-
-	authorName := "Someone"
-	if author != nil {
-		authorName = author.DisplayName
+	pn, exists := p.pending[key]
+	if !exists {
+		pn = &pendingNotification{
+			chatID:    chatID,
+			issueKey:  issue.Key,
+			siteURL:   siteURL,
+			issue:     issue,
+			authors:   make(map[string]string),
+			changes:   make(map[string]*mergedChange),
+			firstSeen: time.Now(),
+		}
+		p.pending[key] = pn
 	}
-	fmt.Fprintf(&sb, "👤 %s made updates in [%s](%s)\n",
-		format.EscapeMarkdown(authorName), issue.Key, issueURL)
 
-	if len(changes) > 0 {
-		sb.WriteString("\n")
-		for _, c := range changes {
-			if c.FromString != "" {
-				fmt.Fprintf(&sb, "%s: %s → %s\n",
-					format.EscapeMarkdown(c.Field),
-					format.EscapeMarkdown(c.FromString),
-					format.EscapeMarkdown(c.ToString))
-			} else {
-				fmt.Fprintf(&sb, "%s: %s\n",
-					format.EscapeMarkdown(c.Field),
-					format.EscapeMarkdown(c.ToString))
+	// Always keep the latest issue state.
+	pn.issue = issue
+
+	if author != nil {
+		pn.authors[author.AccountID] = author.DisplayName
+	}
+
+	// Merge changes: keep the original FromString, update ToString.
+	for _, c := range changes {
+		if existing, ok := pn.changes[c.Field]; ok {
+			existing.ToString = c.ToString
+		} else {
+			pn.changes[c.Field] = &mergedChange{
+				Field:      c.Field,
+				FromString: c.FromString,
+				ToString:   c.ToString,
 			}
 		}
 	}
+}
 
+// flushPending sends notifications for issues that have been pending
+// longer than batchWindow (no more changes expected).
+func (p *Poller) flushPending() {
+	now := time.Now()
+	for key, pn := range p.pending {
+		if now.Sub(pn.firstSeen) < p.batchWindow {
+			continue
+		}
+		p.sendPendingNotification(pn)
+		delete(p.pending, key)
+	}
+}
+
+// flushAllPending sends all pending notifications (used on shutdown).
+func (p *Poller) flushAllPending() {
+	for key, pn := range p.pending {
+		p.sendPendingNotification(pn)
+		delete(p.pending, key)
+	}
+}
+
+func (p *Poller) sendPendingNotification(pn *pendingNotification) {
+	issueURL := fmt.Sprintf("%s/browse/%s", pn.siteURL, pn.issueKey)
+
+	var sb strings.Builder
+
+	// Collect author names.
+	var authorNames []string
+	for _, name := range pn.authors {
+		authorNames = append(authorNames, name)
+	}
+	authorStr := "Someone"
+	if len(authorNames) > 0 {
+		authorStr = strings.Join(authorNames, ", ")
+	}
+	fmt.Fprintf(&sb, "👤 %s made updates in [%s](%s)\n",
+		format.EscapeMarkdown(authorStr), pn.issueKey, issueURL)
+
+	// Merged changes — skip fields that cancelled out.
+	hasChanges := false
+	for _, c := range pn.changes {
+		if c.FromString != "" && c.FromString == c.ToString {
+			continue
+		}
+		if !hasChanges {
+			sb.WriteString("\n")
+			hasChanges = true
+		}
+		if c.FromString != "" {
+			fmt.Fprintf(&sb, "%s: %s → %s\n",
+				format.EscapeMarkdown(c.Field),
+				format.EscapeMarkdown(c.FromString),
+				format.EscapeMarkdown(c.ToString))
+		} else {
+			fmt.Fprintf(&sb, "%s: %s\n",
+				format.EscapeMarkdown(c.Field),
+				format.EscapeMarkdown(c.ToString))
+		}
+	}
+
+	issue := pn.issue
 	sb.WriteString("\n")
 	fmt.Fprintf(&sb, "Summary: %s\n", format.EscapeMarkdown(issue.Fields.Summary))
 	if issue.Fields.Assignee != nil {
@@ -259,12 +371,12 @@ func (p *Poller) notifySubscription(sub *storage.Subscription, issue *jira.Issue
 		fmt.Fprintf(&sb, "Status: %s\n", format.EscapeMarkdown(issue.Fields.Status.Name))
 	}
 
-	msg := tgbotapi.NewMessage(sub.TelegramChatID, sb.String())
+	msg := tgbotapi.NewMessage(pn.chatID, sb.String())
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.DisableWebPagePreview = true
 
 	if _, err := p.tgAPI.Send(msg); err != nil {
-		p.log.Error().Err(err).Int64("chat_id", sub.TelegramChatID).Msg("poller: failed to send notification")
+		p.log.Error().Err(err).Int64("chat_id", pn.chatID).Msg("poller: failed to send notification")
 	}
 }
 

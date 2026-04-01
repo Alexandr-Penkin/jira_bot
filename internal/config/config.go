@@ -6,29 +6,31 @@ import (
 )
 
 type Config struct {
-	TelegramToken    string
-	MongoURI         string
-	MongoDB          string
-	LogLevel         string
-	JiraClientID     string
-	JiraClientSecret string
-	JiraRedirectURI  string
-	PollInterval       string
-	CallbackAddr       string
-	EncryptionKey      string
-	JiraWebhookSecret  string
+	TelegramToken     string
+	MongoURI          string
+	MongoDB           string
+	LogLevel          string
+	JiraClientID      string
+	JiraClientSecret  string
+	JiraRedirectURI   string
+	PollInterval      string
+	BatchWindow       string
+	CallbackAddr      string
+	EncryptionKey     string
+	JiraWebhookSecret string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		TelegramToken:    os.Getenv("TELEGRAM_TOKEN"),
-		MongoURI:         getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017"),
-		MongoDB:          getEnvOrDefault("MONGO_DB", "sleepjirabot"),
-		LogLevel:         getEnvOrDefault("LOG_LEVEL", "info"),
-		JiraClientID:     os.Getenv("JIRA_CLIENT_ID"),
-		JiraClientSecret: os.Getenv("JIRA_CLIENT_SECRET"),
-		JiraRedirectURI:  getEnvOrDefault("JIRA_REDIRECT_URI", "http://localhost:8080/callback"),
-		PollInterval:      getEnvOrDefault("POLL_INTERVAL", "2m"),
+		TelegramToken:     os.Getenv("TELEGRAM_TOKEN"),
+		MongoURI:          getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017"),
+		MongoDB:           getEnvOrDefault("MONGO_DB", "sleepjirabot"),
+		LogLevel:          getEnvOrDefault("LOG_LEVEL", "info"),
+		JiraClientID:      os.Getenv("JIRA_CLIENT_ID"),
+		JiraClientSecret:  os.Getenv("JIRA_CLIENT_SECRET"),
+		JiraRedirectURI:   getEnvOrDefault("JIRA_REDIRECT_URI", "http://localhost:8080/callback"),
+		PollInterval:      getEnvOrDefault("POLL_INTERVAL", "30s"),
+		BatchWindow:       getEnvOrDefault("BATCH_WINDOW", "1m"),
 		CallbackAddr:      getEnvOrDefault("CALLBACK_ADDR", ":8080"),
 		EncryptionKey:     os.Getenv("ENCRYPTION_KEY"),
 		JiraWebhookSecret: os.Getenv("JIRA_WEBHOOK_SECRET"),
