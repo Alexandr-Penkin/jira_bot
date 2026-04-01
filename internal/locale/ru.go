@@ -329,4 +329,45 @@ var ru = map[string]string{
 	"spfield.failed":    "Не удалось загрузить поля из Jira.",
 	"spfield.no_fields": "Не найдено кастомных полей с типом «число».",
 	"spfield.reset_btn": "🔄 Сбросить",
+
+	// Админка
+	"admin.not_authorized": "У вас нет доступа к панели администратора.",
+	"admin.menu":           "🛠 *Панель администратора*\nВыберите действие:",
+	"btn.admin":            "🛠 Админка",
+	"btn.admin_stats":      "📊 Статистика",
+	"btn.admin_users":      "👥 Пользователи",
+	"btn.admin_broadcast":  "📢 Рассылка",
+	"btn.admin_poller":     "⚙️ Статус поллера",
+	"btn.admin_back":       "◀️ Назад в меню",
+
+	"admin.stats": "*📊 Статистика бота*\n\n" +
+		"Всего пользователей: %d\n" +
+		"Подключённых: %d\n" +
+		"Активных подписок: %d\n" +
+		"Активных расписаний: %d",
+
+	"admin.users_title":       "*👥 Подключённые пользователи* (стр. %d):\n\n",
+	"admin.users_empty":       "Пользователи не найдены.",
+	"admin.user_entry":        "%d\\. `%d` — %s\n   Сайт: %s | Создан: %s\n",
+	"admin.user_disconnected": "%d\\. `%d` — не подключён\n   Создан: %s\n",
+	"btn.admin_prev":          "◀️ Назад",
+	"btn.admin_next":          "Далее ▶️",
+
+	"admin.user_actions":         "*Пользователь* `%d`\n\nСайт: %s\nПодключён: %s\n\nВыберите действие:",
+	"btn.admin_disconnect":       "🔌 Отключить",
+	"btn.admin_delete":           "🗑 Удалить",
+	"admin.user_disconnected_ok": "Пользователь `%d` отключён.",
+	"admin.user_deleted":         "Пользователь `%d` удалён со всеми подписками и расписаниями.",
+	"admin.user_not_found":       "Пользователь не найден.",
+
+	"admin.broadcast_enter": "Введите сообщение для рассылки всем подключённым пользователям:",
+	"admin.broadcast_done":  "Рассылка отправлена %d пользователям (%d ошибок).",
+	"admin.broadcast_empty": "Нет подключённых пользователей для рассылки.",
+
+	"admin.poller_status": "*⚙️ Статус поллера*\n\n" +
+		"Интервал опроса: %s\n" +
+		"Окно батчинга: %s\n" +
+		"Ожидающих уведомлений: %d\n" +
+		"Последний опрос: %s",
+	"admin.poller_never": "никогда",
 }

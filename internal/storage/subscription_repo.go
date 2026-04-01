@@ -99,9 +99,9 @@ func (r *SubscriptionRepo) GetAllActive(ctx context.Context) ([]Subscription, er
 // GetActiveByProjectKey returns active subscriptions matching the given project key.
 func (r *SubscriptionRepo) GetActiveByProjectKey(ctx context.Context, projectKey string) ([]Subscription, error) {
 	cursor, err := r.coll.Find(ctx, bson.M{
-		"is_active":        true,
+		"is_active":         true,
 		"subscription_type": SubTypeProjectUpdates,
-		"jira_project_key": projectKey,
+		"jira_project_key":  projectKey,
 	})
 	if err != nil {
 		return nil, err
@@ -118,9 +118,9 @@ func (r *SubscriptionRepo) GetActiveByProjectKey(ctx context.Context, projectKey
 // GetActiveByIssueKey returns active subscriptions matching the given issue key.
 func (r *SubscriptionRepo) GetActiveByIssueKey(ctx context.Context, issueKey string) ([]Subscription, error) {
 	cursor, err := r.coll.Find(ctx, bson.M{
-		"is_active":        true,
+		"is_active":         true,
 		"subscription_type": SubTypeIssueUpdates,
-		"jira_issue_key":   issueKey,
+		"jira_issue_key":    issueKey,
 	})
 	if err != nil {
 		return nil, err
@@ -183,6 +183,11 @@ func (r *SubscriptionRepo) GetMentionSubscriptionsByUserIDs(ctx context.Context,
 	}
 
 	return subs, nil
+}
+
+// CountActive returns the total number of active subscriptions.
+func (r *SubscriptionRepo) CountActive(ctx context.Context) (int64, error) {
+	return r.coll.CountDocuments(ctx, bson.M{"is_active": true})
 }
 
 func (r *SubscriptionRepo) UpdateLastPolled(ctx context.Context, id bson.ObjectID, ts int64) error {

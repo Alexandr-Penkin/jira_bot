@@ -69,6 +69,11 @@ func (r *ScheduleRepo) GetByChat(ctx context.Context, chatID int64) ([]Scheduled
 	return reports, nil
 }
 
+// CountActive returns the total number of active schedules.
+func (r *ScheduleRepo) CountActive(ctx context.Context) (int64, error) {
+	return r.coll.CountDocuments(ctx, bson.M{"is_active": true})
+}
+
 func (r *ScheduleRepo) Delete(ctx context.Context, id bson.ObjectID) error {
 	_, err := r.coll.DeleteOne(ctx, bson.M{"_id": id})
 	return err

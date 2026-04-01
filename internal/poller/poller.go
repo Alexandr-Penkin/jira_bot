@@ -47,6 +47,14 @@ type pendingNotification struct {
 // Poller periodically queries the Jira API for issue changes
 // and sends notifications to subscribers. Changes for the same issue
 // are accumulated during batchWindow before sending one merged notification.
+// PollerStatus contains runtime status information for the admin panel.
+type PollerStatus struct {
+	Interval     time.Duration
+	BatchWindow  time.Duration
+	PendingCount int
+	LastPollAt   time.Time
+}
+
 type Poller struct {
 	subRepo     *storage.SubscriptionRepo
 	userRepo    *storage.UserRepo
@@ -57,6 +65,7 @@ type Poller struct {
 	batchWindow time.Duration
 	dedup       *notifydedup.Guard
 	pending     map[string]*pendingNotification
+	lastPollAt  time.Time
 }
 
 func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval time.Duration, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
@@ -102,7 +111,19 @@ func (p *Poller) Start(ctx context.Context) {
 	}
 }
 
+// Status returns the current poller status for admin monitoring.
+func (p *Poller) Status() PollerStatus {
+	return PollerStatus{
+		Interval:     p.interval,
+		BatchWindow:  p.batchWindow,
+		PendingCount: len(p.pending),
+		LastPollAt:   p.lastPollAt,
+	}
+}
+
 func (p *Poller) poll(ctx context.Context) {
+	p.lastPollAt = time.Now()
+
 	// Get distinct user IDs from active subscriptions.
 	userIDs, err := p.subRepo.GetActiveUserIDs(ctx)
 	if err != nil {

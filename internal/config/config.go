@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strconv"
 )
 
 type Config struct {
@@ -18,6 +19,7 @@ type Config struct {
 	CallbackAddr      string
 	EncryptionKey     string
 	JiraWebhookSecret string
+	AdminTelegramID   int64
 }
 
 func Load() (*Config, error) {
@@ -57,6 +59,14 @@ func Load() (*Config, error) {
 
 	if cfg.JiraWebhookSecret == "" {
 		return nil, errors.New("JIRA_WEBHOOK_SECRET is required for webhook signature verification")
+	}
+
+	if v := os.Getenv("ADMIN_TELEGRAM_ID"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, errors.New("ADMIN_TELEGRAM_ID must be a valid integer")
+		}
+		cfg.AdminTelegramID = id
 	}
 
 	return cfg, nil

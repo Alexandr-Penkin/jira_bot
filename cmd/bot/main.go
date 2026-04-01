@@ -79,7 +79,7 @@ func main() {
 	jiraClient := jira.NewClient(oauthClient, userRepo, log)
 	jiraClient.StartCleanup(ctx)
 
-	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, log)
+	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, log, cfg.AdminTelegramID)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create telegram bot")
 		cancel()
@@ -107,6 +107,7 @@ func main() {
 	dedup := notifydedup.New(3 * batchWindow)
 
 	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, batchWindow, dedup)
+	bot.SetPollerRef(issuePoller)
 
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
 

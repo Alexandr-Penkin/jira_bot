@@ -329,4 +329,45 @@ var en = map[string]string{
 	"spfield.failed":    "Failed to load fields from Jira.",
 	"spfield.no_fields": "No number-type custom fields found.",
 	"spfield.reset_btn": "🔄 Reset to auto-detect",
+
+	// Admin
+	"admin.not_authorized": "You are not authorized to access the admin panel.",
+	"admin.menu":           "🛠 *Admin Panel*\nChoose an action:",
+	"btn.admin":            "🛠 Admin",
+	"btn.admin_stats":      "📊 Statistics",
+	"btn.admin_users":      "👥 Users",
+	"btn.admin_broadcast":  "📢 Broadcast",
+	"btn.admin_poller":     "⚙️ Poller Status",
+	"btn.admin_back":       "◀️ Back to Menu",
+
+	"admin.stats": "*📊 Bot Statistics*\n\n" +
+		"Users total: %d\n" +
+		"Users connected: %d\n" +
+		"Active subscriptions: %d\n" +
+		"Active schedules: %d",
+
+	"admin.users_title":       "*👥 Connected Users* (page %d):\n\n",
+	"admin.users_empty":       "No users found.",
+	"admin.user_entry":        "%d\\. `%d` — %s\n   Site: %s | Created: %s\n",
+	"admin.user_disconnected": "%d\\. `%d` — disconnected\n   Created: %s\n",
+	"btn.admin_prev":          "◀️ Prev",
+	"btn.admin_next":          "Next ▶️",
+
+	"admin.user_actions":         "*User* `%d`\n\nSite: %s\nConnected: %s\n\nChoose action:",
+	"btn.admin_disconnect":       "🔌 Disconnect User",
+	"btn.admin_delete":           "🗑 Delete User",
+	"admin.user_disconnected_ok": "User `%d` disconnected.",
+	"admin.user_deleted":         "User `%d` deleted with all subscriptions and schedules.",
+	"admin.user_not_found":       "User not found.",
+
+	"admin.broadcast_enter": "Enter message to broadcast to all connected users:",
+	"admin.broadcast_done":  "Broadcast sent to %d users (%d failed).",
+	"admin.broadcast_empty": "No connected users to send to.",
+
+	"admin.poller_status": "*⚙️ Poller Status*\n\n" +
+		"Poll interval: %s\n" +
+		"Batch window: %s\n" +
+		"Pending notifications: %d\n" +
+		"Last poll: %s",
+	"admin.poller_never": "never",
 }

@@ -141,3 +141,37 @@ func menuButtonKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 		),
 	)
 }
+
+func adminMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_stats"), "adm:stats"),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_users"), "adm:users"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_broadcast"), "adm:broadcast"),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_poller"), "adm:poller"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_back"), "m:main"),
+		),
+	)
+}
+
+func mainMenuKeyboardAdmin(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.profile"), "m:profile"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.issues"), "m:issues"),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.notifications"), "m:notif"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.reports"), "m:reports"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin"), "m:admin"),
+		),
+	)
+}

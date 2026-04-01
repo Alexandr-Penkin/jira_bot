@@ -229,6 +229,35 @@ func (r *UserRepo) DeleteByTelegramID(ctx context.Context, telegramUserID int64)
 	return err
 }
 
+// CountAll returns the total number of users.
+func (r *UserRepo) CountAll(ctx context.Context) (int64, error) {
+	return r.coll.CountDocuments(ctx, bson.M{})
+}
+
+// CountConnected returns the number of users with a non-empty access token.
+func (r *UserRepo) CountConnected(ctx context.Context) (int64, error) {
+	return r.coll.CountDocuments(ctx, bson.M{
+		"access_token": bson.M{"$ne": ""},
+	})
+}
+
+// ListAll returns all users without decrypting tokens.
+func (r *UserRepo) ListAll(ctx context.Context, skip, limit int64) ([]User, error) {
+	opts := options.Find().
+		SetSort(bson.M{"created_ts": -1}).
+		SetSkip(skip).
+		SetLimit(limit)
+	cursor, err := r.coll.Find(ctx, bson.M{}, opts)
+	if err != nil {
+		return nil, err
+	}
+	var users []User
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
 func (r *UserRepo) decryptTokens(user *User) error {
 	var err error
 	user.AccessToken, err = r.enc.Decrypt(user.AccessToken)

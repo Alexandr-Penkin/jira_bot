@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"SleepJiraBot/internal/jira"
+	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/storage"
 )
 
@@ -22,7 +23,7 @@ type Bot struct {
 	log     zerolog.Logger
 }
 
-func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, log zerolog.Logger) (*Bot, error) {
+func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, log zerolog.Logger, adminID int64) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -32,7 +33,7 @@ func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, user
 
 	return &Bot{
 		api:     api,
-		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, log),
+		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, log, adminID),
 		log:     log,
 	}, nil
 }
@@ -43,6 +44,10 @@ func (b *Bot) API() *tgbotapi.BotAPI {
 
 func (b *Bot) SetCallbackServer(cs *jira.CallbackServer) {
 	b.handler.SetCallbackServer(cs)
+}
+
+func (b *Bot) SetPollerRef(p *poller.Poller) {
+	b.handler.SetPollerRef(p)
 }
 
 func (b *Bot) SetOnScheduleChange(fn func()) {

@@ -17,6 +17,7 @@ import (
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
+	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/storage"
 )
 
@@ -45,9 +46,11 @@ type Handler struct {
 	onScheduleChange func()
 	log              zerolog.Logger
 	states           *stateManager
+	adminID          int64
+	pollerRef        *poller.Poller
 }
 
-func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, log zerolog.Logger) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, log zerolog.Logger, adminID int64) *Handler {
 	return &Handler{
 		api:          api,
 		oauth:        oauth,
@@ -57,6 +60,7 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 		scheduleRepo: scheduleRepo,
 		log:          log,
 		states:       newStateManager(),
+		adminID:      adminID,
 	}
 }
 
@@ -102,7 +106,7 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 
 	switch message.Command() {
 	case "start", "menu":
-		return h.handleStart(chatID, h.getLang(ctx, userID))
+		return h.handleStart(chatID, userID, h.getLang(ctx, userID))
 	case "help":
 		return h.handleHelp(chatID, h.getLang(ctx, userID))
 	case "lang":
@@ -209,6 +213,12 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 		return h.handleUnschedule(ctx, chatID)
 	case "schedules":
 		return h.handleSchedules(ctx, chatID)
+	case "admin":
+		lang := h.getLang(ctx, userID)
+		if !h.isAdmin(userID) {
+			return tgbotapi.NewMessage(chatID, locale.T(lang, "admin.not_authorized"))
+		}
+		return h.handleAdminCommand(chatID, lang)
 	default:
 		lang := h.getLang(ctx, userID)
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "unknown_command"))
@@ -315,6 +325,26 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDailyJQLReset(ctx, cq)
 	case "issue_action":
 		h.handleIssueActionCallback(ctx, cq, parts)
+	case "adm":
+		if h.isAdmin(cq.From.ID) {
+			h.handleAdminCallback(ctx, cq, parts[1])
+		}
+	case "adm_user":
+		if h.isAdmin(cq.From.ID) {
+			h.handleAdminUserCallback(ctx, cq, parts)
+		}
+	case "adm_page":
+		if h.isAdmin(cq.From.ID) {
+			h.handleAdminPageCallback(ctx, cq, parts)
+		}
+	case "adm_disc":
+		if h.isAdmin(cq.From.ID) {
+			h.handleAdminDisconnect(ctx, cq, parts)
+		}
+	case "adm_del":
+		if h.isAdmin(cq.From.ID) {
+			h.handleAdminDelete(ctx, cq, parts)
+		}
 	default:
 		cb := tgbotapi.NewCallback(cq.ID, "Unknown action")
 		_, _ = h.api.Request(cb)
@@ -333,7 +363,21 @@ func (h *Handler) handleMenuCallback(ctx context.Context, cq *tgbotapi.CallbackQ
 	switch menu {
 	case "main":
 		text = locale.T(lang, "menu.main")
-		keyboard = mainMenuKeyboard(lang)
+		if h.isAdmin(cq.From.ID) {
+			keyboard = mainMenuKeyboardAdmin(lang)
+		} else {
+			keyboard = mainMenuKeyboard(lang)
+		}
+		edit := tgbotapi.NewEditMessageTextAndMarkup(
+			cq.Message.Chat.ID, cq.Message.MessageID, text, keyboard)
+		edit.ParseMode = tgbotapi.ModeMarkdown
+		if _, err := h.api.Send(edit); err != nil {
+			msg := tgbotapi.NewMessage(cq.Message.Chat.ID, text)
+			msg.ParseMode = tgbotapi.ModeMarkdown
+			msg.ReplyMarkup = keyboard
+			h.sendMessage(msg)
+		}
+		return
 	case "issues":
 		text = locale.T(lang, "menu.issues")
 		keyboard = issuesMenuKeyboard(lang)
@@ -346,6 +390,12 @@ func (h *Handler) handleMenuCallback(ctx context.Context, cq *tgbotapi.CallbackQ
 	case "profile":
 		text = locale.T(lang, "menu.profile")
 		keyboard = profileMenuKeyboard(lang)
+	case "admin":
+		if !h.isAdmin(cq.From.ID) {
+			return
+		}
+		text = locale.T(lang, "admin.menu")
+		keyboard = adminMenuKeyboard(lang)
 	default:
 		return
 	}
@@ -614,15 +664,26 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	case "schedule":
 		h.states.Clear(userID)
 		h.sendMessage(withMenuButton(h.handleSchedule(ctx, chatID, userID, text), lang))
+
+	case "admin_broadcast":
+		h.states.Clear(userID)
+		if !h.isAdmin(userID) {
+			return
+		}
+		h.handleAdminBroadcast(ctx, chatID, userID, text)
 	}
 }
 
 // --- Static pages ---
 
-func (h *Handler) handleStart(chatID int64, lang locale.Lang) tgbotapi.MessageConfig {
+func (h *Handler) handleStart(chatID int64, userID int64, lang locale.Lang) tgbotapi.MessageConfig {
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "start.welcome"))
 	msg.ParseMode = tgbotapi.ModeMarkdown
-	msg.ReplyMarkup = mainMenuKeyboard(lang)
+	if h.isAdmin(userID) {
+		msg.ReplyMarkup = mainMenuKeyboardAdmin(lang)
+	} else {
+		msg.ReplyMarkup = mainMenuKeyboard(lang)
+	}
 	return msg
 }
 
