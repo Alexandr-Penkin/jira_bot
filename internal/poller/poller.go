@@ -210,7 +210,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			// If already accumulating changes for this issue+chat, just merge.
 			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
 			if _, inPending := p.pending[pendingKey]; inPending {
-				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS)
+				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID)
 				continue
 			}
 
@@ -230,7 +230,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				continue
 			}
 
-			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS)
+			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID)
 		}
 
 		if err := p.subRepo.UpdateLastPolled(ctx, sub.ID, now); err != nil {
@@ -279,10 +279,15 @@ func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
 	return fallback
 }
 
-func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64) {
+func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string) {
 	key := fmt.Sprintf("%d:%s", chatID, issue.Key)
 
-	author, changes := recentChanges(issue, sinceTS)
+	author, changes := recentChanges(issue, sinceTS, excludeAccountID)
+
+	// All recent changes were made by the current user — skip notification.
+	if author == nil && len(changes) == 0 {
+		return
+	}
 
 	pn, exists := p.pending[key]
 	if !exists {
@@ -452,7 +457,7 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 // recentChanges extracts changelog entries since the given timestamp.
 // If no recent entries match but the changelog is non-empty, the author
 // of the most recent history entry is returned as a fallback.
-func recentChanges(issue *jira.Issue, sinceTS int64) (*jira.JiraUser, []jira.ChangeItem) {
+func recentChanges(issue *jira.Issue, sinceTS int64, excludeAccountID string) (*jira.JiraUser, []jira.ChangeItem) {
 	if issue.Changelog == nil {
 		return nil, nil
 	}
@@ -469,6 +474,10 @@ func recentChanges(issue *jira.Issue, sinceTS int64) (*jira.JiraUser, []jira.Cha
 		if created.Before(sinceTime) {
 			continue
 		}
+		// Skip changes made by the current user.
+		if excludeAccountID != "" && h.Author != nil && h.Author.AccountID == excludeAccountID {
+			continue
+		}
 		if author == nil {
 			author = h.Author
 		}
@@ -479,7 +488,10 @@ func recentChanges(issue *jira.Issue, sinceTS int64) (*jira.JiraUser, []jira.Cha
 	// entry's author so we never show "Someone" when data is available.
 	if author == nil && len(issue.Changelog.Histories) > 0 {
 		last := issue.Changelog.Histories[len(issue.Changelog.Histories)-1]
-		author = last.Author
+		// Don't use fallback if the last author is the excluded user.
+		if excludeAccountID == "" || last.Author == nil || last.Author.AccountID != excludeAccountID {
+			author = last.Author
+		}
 	}
 
 	return author, items

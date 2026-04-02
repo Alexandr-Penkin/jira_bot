@@ -226,6 +226,19 @@ func (h *Handler) processEvent(event Event) {
 			continue
 		}
 
+		// Skip notifications about changes made by the current user.
+		if event.User != nil && event.User.AccountID != "" {
+			u, err := h.userRepo.GetByTelegramID(ctx, matched[i].TelegramUserID)
+			if err == nil && u != nil && u.JiraAccountID == event.User.AccountID {
+				h.log.Debug().
+					Int64("chat_id", matched[i].TelegramChatID).
+					Str("issue", issueKey).
+					Msg("webhook: skipping self-triggered notification")
+				sent[matched[i].TelegramChatID] = true
+				continue
+			}
+		}
+
 		if issueKey != "" && !h.dedup.Allow(matched[i].TelegramChatID, issueKey) {
 			h.log.Debug().
 				Int64("chat_id", matched[i].TelegramChatID).
