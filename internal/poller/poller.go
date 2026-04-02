@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -65,6 +66,7 @@ type Poller struct {
 	batchWindow time.Duration
 	dedup       *notifydedup.Guard
 	pending     map[string]*pendingNotification
+	mu          sync.RWMutex
 	lastPollAt  time.Time
 }
 
@@ -113,16 +115,22 @@ func (p *Poller) Start(ctx context.Context) {
 
 // Status returns the current poller status for admin monitoring.
 func (p *Poller) Status() PollerStatus {
+	p.mu.RLock()
+	pendingCount := len(p.pending)
+	lastPoll := p.lastPollAt
+	p.mu.RUnlock()
 	return PollerStatus{
 		Interval:     p.interval,
 		BatchWindow:  p.batchWindow,
-		PendingCount: len(p.pending),
-		LastPollAt:   p.lastPollAt,
+		PendingCount: pendingCount,
+		LastPollAt:   lastPoll,
 	}
 }
 
 func (p *Poller) poll(ctx context.Context) {
+	p.mu.Lock()
 	p.lastPollAt = time.Now()
+	p.mu.Unlock()
 
 	// Get distinct user IDs from active subscriptions.
 	userIDs, err := p.subRepo.GetActiveUserIDs(ctx)
@@ -247,12 +255,12 @@ func (p *Poller) buildJQL(sub *storage.Subscription) string {
 		if sub.JiraProjectKey == "" {
 			return ""
 		}
-		return fmt.Sprintf("project = %s", sub.JiraProjectKey)
+		return fmt.Sprintf("project = %q", sub.JiraProjectKey)
 	case storage.SubTypeIssueUpdates:
 		if sub.JiraIssueKey == "" {
 			return ""
 		}
-		return fmt.Sprintf("key = %s", sub.JiraIssueKey)
+		return fmt.Sprintf("key = %q", sub.JiraIssueKey)
 	case storage.SubTypeFilterUpdates:
 		if sub.JiraFilterJQL == "" {
 			return ""

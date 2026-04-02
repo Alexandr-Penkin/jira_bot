@@ -35,6 +35,7 @@ type Scheduler struct {
 }
 
 func New(scheduleRepo *storage.ScheduleRepo, userRepo *storage.UserRepo, jiraClient *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *Scheduler {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		cron:         cron.New(),
 		scheduleRepo: scheduleRepo,
@@ -42,6 +43,8 @@ func New(scheduleRepo *storage.ScheduleRepo, userRepo *storage.UserRepo, jiraCli
 		jiraClient:   jiraClient,
 		tgAPI:        tgAPI,
 		log:          log,
+		cancelCtx:    ctx,
+		cancelFunc:   cancel,
 	}
 }
 
@@ -146,7 +149,7 @@ func (s *Scheduler) executeReport(report storage.ScheduledReport) {
 		errMsg := tgbotapi.NewMessage(report.TelegramChatID,
 			locale.T(lang, "report.failed",
 				format.EscapeMarkdown(report.ReportName),
-				format.EscapeMarkdown(err.Error()),
+				"Jira query failed",
 			))
 		errMsg.ParseMode = tgbotapi.ModeMarkdown
 		if _, sendErr := s.tgAPI.Send(errMsg); sendErr != nil {

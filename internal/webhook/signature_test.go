@@ -38,7 +38,7 @@ func TestVerifySignature_EmptySignature(t *testing.T) {
 	assert.False(t, h.verifySignature([]byte("body"), ""))
 }
 
-func TestVerifySignature_WithoutPrefix(t *testing.T) {
+func TestVerifySignature_WithoutPrefix_Rejected(t *testing.T) {
 	secret := "my-secret"
 	h := &Handler{webhookSecret: secret, log: zerolog.Nop()}
 
@@ -47,7 +47,8 @@ func TestVerifySignature_WithoutPrefix(t *testing.T) {
 	mac.Write(body)
 	signature := hex.EncodeToString(mac.Sum(nil))
 
-	assert.True(t, h.verifySignature(body, signature))
+	// Signatures without the "sha256=" prefix must be rejected.
+	assert.False(t, h.verifySignature(body, signature))
 }
 
 func TestServeHTTP_SignatureVerification_Rejected(t *testing.T) {

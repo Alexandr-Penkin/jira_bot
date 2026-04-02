@@ -210,9 +210,9 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 		}
 		return h.handleSchedule(ctx, chatID, userID, args)
 	case "unschedule":
-		return h.handleUnschedule(ctx, chatID)
+		return h.handleUnschedule(ctx, chatID, userID)
 	case "schedules":
-		return h.handleSchedules(ctx, chatID)
+		return h.handleSchedules(ctx, chatID, userID)
 	case "admin":
 		lang := h.getLang(ctx, userID)
 		if !h.isAdmin(userID) {
@@ -485,9 +485,9 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.states.Set(userID, "schedule", nil)
 		h.sendPrompt(chatID, locale.T(lang, "schedule.enter"), lang)
 	case "unsched":
-		h.sendMessage(withMenuButton(h.handleUnschedule(ctx, chatID), lang))
+		h.sendMessage(withMenuButton(h.handleUnschedule(ctx, chatID, userID), lang))
 	case "scheds":
-		h.sendMessage(withMenuButton(h.handleSchedules(ctx, chatID), lang))
+		h.sendMessage(withMenuButton(h.handleSchedules(ctx, chatID, userID), lang))
 	case "defaults":
 		h.states.Set(userID, "defaults_project", nil)
 		h.sendPrompt(chatID, locale.T(lang, "defaults.enter_project"), lang)

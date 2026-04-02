@@ -69,7 +69,15 @@ func (sm *stateManager) Get(userID int64) (step string, data map[string]string) 
 	if time.Since(s.createdAt) > stateMaxAge {
 		return "", nil
 	}
-	return s.step, s.data
+	// Return a deep copy to prevent concurrent map mutations from callers.
+	var dataCopy map[string]string
+	if s.data != nil {
+		dataCopy = make(map[string]string, len(s.data))
+		for k, v := range s.data {
+			dataCopy[k] = v
+		}
+	}
+	return s.step, dataCopy
 }
 
 func (sm *stateManager) Clear(userID int64) {

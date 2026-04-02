@@ -52,6 +52,11 @@ func (h *Handler) handleFiltersCallback(ctx context.Context, cq *tgbotapi.Callba
 	chatID := cq.Message.Chat.ID
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
+
+	if len(parts) < 2 {
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "filters.not_found")))
+		return
+	}
 	filterID := parts[1]
 
 	user, err := h.requireAuth(ctx, userID)

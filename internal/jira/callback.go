@@ -60,7 +60,11 @@ func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, use
 		Addr:              addr,
 		Handler:           cs.mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
+
+	go cs.cleanupPendingSites(ctx)
 
 	return cs
 }
@@ -168,6 +172,25 @@ func (cs *CallbackServer) getUserLang(ctx context.Context, telegramUserID int64)
 		return locale.Default
 	}
 	return locale.FromString(user.Language)
+}
+
+func (cs *CallbackServer) cleanupPendingSites(ctx context.Context) {
+	ticker := time.NewTicker(pendingSiteMaxAge)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cs.pendingMu.Lock()
+			for id, p := range cs.pendingSites {
+				if time.Since(p.CreatedAt) > pendingSiteMaxAge {
+					delete(cs.pendingSites, id)
+				}
+			}
+			cs.pendingMu.Unlock()
+		}
+	}
 }
 
 func (cs *CallbackServer) storePendingSite(telegramUserID int64, token *TokenResponse, resources []AccessibleResource) {

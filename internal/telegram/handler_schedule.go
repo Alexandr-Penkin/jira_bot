@@ -68,31 +68,33 @@ func (h *Handler) handleSchedule(ctx context.Context, chatID, userID int64, inpu
 	return msg
 }
 
-func (h *Handler) handleUnschedule(ctx context.Context, chatID int64) tgbotapi.MessageConfig {
+func (h *Handler) handleUnschedule(ctx context.Context, chatID, userID int64) tgbotapi.MessageConfig {
+	lang := h.getLang(ctx, userID)
 	if err := h.scheduleRepo.DeleteByChat(ctx, chatID); err != nil {
 		h.log.Error().Err(err).Msg("failed to delete schedules")
-		return tgbotapi.NewMessage(chatID, locale.T(locale.Default, "unschedule.failed"))
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "unschedule.failed"))
 	}
 
 	if h.onScheduleChange != nil {
 		h.onScheduleChange()
 	}
 
-	return tgbotapi.NewMessage(chatID, locale.T(locale.Default, "unschedule.success"))
+	return tgbotapi.NewMessage(chatID, locale.T(lang, "unschedule.success"))
 }
 
-func (h *Handler) handleSchedules(ctx context.Context, chatID int64) tgbotapi.MessageConfig {
+func (h *Handler) handleSchedules(ctx context.Context, chatID, userID int64) tgbotapi.MessageConfig {
+	lang := h.getLang(ctx, userID)
 	reports, err := h.scheduleRepo.GetByChat(ctx, chatID)
 	if err != nil {
 		h.log.Error().Err(err).Msg("failed to get schedules")
-		return tgbotapi.NewMessage(chatID, locale.T(locale.Default, "schedules.failed"))
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "schedules.failed"))
 	}
 
 	if len(reports) == 0 {
-		return tgbotapi.NewMessage(chatID, locale.T(locale.Default, "schedules.none"))
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "schedules.none"))
 	}
 
-	text := locale.T(locale.Default, "schedules.title")
+	text := locale.T(lang, "schedules.title")
 	for i, r := range reports {
 		text += fmt.Sprintf("%d. *%s*\n   Cron: `%s`\n   JQL: `%s`\n\n",
 			i+1,

@@ -49,7 +49,9 @@ func NewRateLimiter(rate, burst int, window time.Duration, ctx ...context.Contex
 
 // SetLogger configures the logger for rate limit events.
 func (rl *RateLimiter) SetLogger(log zerolog.Logger) {
+	rl.mu.Lock()
 	rl.log = log
+	rl.mu.Unlock()
 }
 
 func (rl *RateLimiter) cleanup(ctx context.Context) {
@@ -91,9 +93,12 @@ func (rl *RateLimiter) allow(ip string) bool {
 		b.lastReset = now
 	} else {
 		refill := int(elapsed.Seconds() / rl.window.Seconds() * float64(rl.rate))
-		b.tokens += refill
-		if b.tokens > rl.burst {
-			b.tokens = rl.burst
+		if refill > 0 {
+			b.tokens += refill
+			if b.tokens > rl.burst {
+				b.tokens = rl.burst
+			}
+			b.lastReset = now
 		}
 	}
 

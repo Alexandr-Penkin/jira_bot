@@ -455,6 +455,7 @@ func (c *Client) SearchIssuesWithChangelog(ctx context.Context, user *storage.Us
 const (
 	boardPageSize  = 50
 	sprintPageSize = 50
+	maxPages       = 20
 )
 
 // GetBoards returns all boards for a project using the Agile API (paginated).
@@ -462,7 +463,7 @@ func (c *Client) GetBoards(ctx context.Context, user *storage.User, projectKey s
 	var all []Board
 	startAt := 0
 
-	for {
+	for page := 0; page < maxPages; page++ {
 		params := url.Values{
 			"maxResults": {fmt.Sprintf("%d", boardPageSize)},
 			"startAt":    {fmt.Sprintf("%d", startAt)},
@@ -516,7 +517,7 @@ func (c *Client) GetSprints(ctx context.Context, user *storage.User, boardID int
 	var all []Sprint
 	startAt := 0
 
-	for {
+	for page := 0; page < maxPages; page++ {
 		params := url.Values{
 			"maxResults": {fmt.Sprintf("%d", sprintPageSize)},
 			"startAt":    {fmt.Sprintf("%d", startAt)},

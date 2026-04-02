@@ -9,8 +9,9 @@ import (
 // sent more than once within a configurable time window. It is safe for
 // concurrent use by both the poller and webhook goroutines.
 type Guard struct {
-	mu  sync.Mutex
-	ttl time.Duration
+	mu     sync.Mutex
+	ttl    time.Duration
+	stopCh chan struct{}
 	// sent maps "chatID:issueKey" → expiry timestamp.
 	sent map[string]time.Time
 }
@@ -18,11 +19,17 @@ type Guard struct {
 // New creates a Guard with the given deduplication window.
 func New(ttl time.Duration) *Guard {
 	g := &Guard{
-		ttl:  ttl,
-		sent: make(map[string]time.Time),
+		ttl:    ttl,
+		sent:   make(map[string]time.Time),
+		stopCh: make(chan struct{}),
 	}
 	go g.cleanupLoop()
 	return g
+}
+
+// Stop terminates the background cleanup goroutine.
+func (g *Guard) Stop() {
+	close(g.stopCh)
 }
 
 // Allow returns true if a notification for this chat+issue has NOT been
@@ -71,14 +78,19 @@ func appendInt64(buf []byte, n int64) []byte {
 func (g *Guard) cleanupLoop() {
 	ticker := time.NewTicker(g.ttl)
 	defer ticker.Stop()
-	for range ticker.C {
-		g.mu.Lock()
-		now := time.Now()
-		for k, exp := range g.sent {
-			if now.After(exp) {
-				delete(g.sent, k)
+	for {
+		select {
+		case <-g.stopCh:
+			return
+		case <-ticker.C:
+			g.mu.Lock()
+			now := time.Now()
+			for k, exp := range g.sent {
+				if now.After(exp) {
+					delete(g.sent, k)
+				}
 			}
+			g.mu.Unlock()
 		}
-		g.mu.Unlock()
 	}
 }

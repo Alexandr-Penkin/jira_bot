@@ -69,11 +69,14 @@ func (h *Handler) processQueue(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			h.drainQueue()
 			return
 		case event := <-h.eventQueue:
 			select {
 			case h.sem <- struct{}{}:
 			case <-ctx.Done():
+				h.processEvent(event)
+				h.drainQueue()
 				return
 			}
 			h.wg.Add(1)
@@ -84,6 +87,18 @@ func (h *Handler) processQueue(ctx context.Context) {
 				}()
 				h.processEvent(e)
 			}(event)
+		}
+	}
+}
+
+// drainQueue processes remaining events in the queue before shutdown.
+func (h *Handler) drainQueue() {
+	for {
+		select {
+		case event := <-h.eventQueue:
+			h.processEvent(event)
+		default:
+			return
 		}
 	}
 }
@@ -134,7 +149,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) verifySignature(body []byte, signature string) bool {
-	if signature == "" {
+	if !strings.HasPrefix(signature, "sha256=") {
 		return false
 	}
 

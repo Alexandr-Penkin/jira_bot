@@ -234,9 +234,19 @@ func (h *Handler) handleAdminDelete(ctx context.Context, cq *tgbotapi.CallbackQu
 		return
 	}
 
-	_ = h.subRepo.DeleteByUserID(ctx, targetID)
-	_ = h.scheduleRepo.DeleteByUserID(ctx, targetID)
-	_ = h.userRepo.DeleteByTelegramID(ctx, targetID)
+	var errs []string
+	if err := h.subRepo.DeleteByUserID(ctx, targetID); err != nil {
+		errs = append(errs, "subscriptions: "+err.Error())
+	}
+	if err := h.scheduleRepo.DeleteByUserID(ctx, targetID); err != nil {
+		errs = append(errs, "schedules: "+err.Error())
+	}
+	if err := h.userRepo.DeleteByTelegramID(ctx, targetID); err != nil {
+		errs = append(errs, "user: "+err.Error())
+	}
+	if len(errs) > 0 {
+		h.log.Error().Strs("errors", errs).Int64("target_id", targetID).Msg("admin: partial delete failure")
+	}
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "admin.user_deleted", targetID))
 	msg.ParseMode = tgbotapi.ModeMarkdown
@@ -265,6 +275,8 @@ func (h *Handler) handleAdminBroadcast(ctx context.Context, chatID int64, userID
 		} else {
 			sent++
 		}
+		// Telegram rate limit: ~30 messages/second.
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	if sent == 0 && failed == 0 {

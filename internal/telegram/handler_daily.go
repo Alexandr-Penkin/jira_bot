@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ const (
 	dailyMaxResults     = 50
 	userSearchMaxResult = 10
 )
+
+var jiraAccountIDRe = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)
 
 // handleDaily generates a daily standup for the current user.
 func (h *Handler) handleDaily(ctx context.Context, chatID, userID int64) tgbotapi.MessageConfig {
@@ -52,6 +55,10 @@ func (h *Handler) handleDaily(ctx context.Context, chatID, userID int64) tgbotap
 // handleDailyUser generates a daily standup for a specific Jira user by accountId.
 func (h *Handler) handleDailyUser(ctx context.Context, chatID, userID int64, accountID, displayName string) tgbotapi.MessageConfig {
 	lang := h.getLang(ctx, userID)
+
+	if !jiraAccountIDRe.MatchString(accountID) {
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "daily.user_not_found"))
+	}
 
 	user, err := h.requireAuth(ctx, userID)
 	if err != nil {
