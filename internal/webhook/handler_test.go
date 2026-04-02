@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"SleepJiraBot/internal/format"
+	"SleepJiraBot/internal/locale"
 )
 
 func TestEscapeMarkdown(t *testing.T) {
@@ -41,7 +42,7 @@ func TestEscapeMarkdown(t *testing.T) {
 func TestFormatNotification_NilIssue(t *testing.T) {
 	h := &Handler{log: zerolog.Nop()}
 	event := Event{WebhookEvent: EventIssueCreated}
-	result := h.formatNotification(event, "issue_created")
+	result := h.formatNotification(event, "issue_created", locale.EN)
 	assert.Equal(t, "Jira event: issue_created", result)
 }
 
@@ -57,7 +58,7 @@ func TestFormatNotification_BasicFormat(t *testing.T) {
 		},
 	}
 
-	result := h.formatNotification(event, "issue_created")
+	result := h.formatNotification(event, "issue_created", locale.EN)
 	assert.Contains(t, result, "PROJ-123")
 	assert.Contains(t, result, "Test issue")
 	assert.Contains(t, result, "🆕")
@@ -83,7 +84,7 @@ func TestFormatNotification_DetailedFormat(t *testing.T) {
 		},
 	}
 
-	result := h.formatNotification(event, "issue_updated")
+	result := h.formatNotification(event, "issue_updated", locale.EN)
 	assert.Contains(t, result, "PROJ-456")
 	assert.Contains(t, result, "Updated issue")
 	assert.Contains(t, result, "✏️")
@@ -110,7 +111,7 @@ func TestFormatNotification_CommentEvent(t *testing.T) {
 		},
 	}
 
-	result := h.formatNotification(event, "comment_created")
+	result := h.formatNotification(event, "comment_created", locale.EN)
 	assert.Contains(t, result, "💬")
 	assert.Contains(t, result, "Commenter")
 }
@@ -125,7 +126,7 @@ func TestFormatNotification_DeletedEvent(t *testing.T) {
 		},
 	}
 
-	result := h.formatNotification(event, "issue_deleted")
+	result := h.formatNotification(event, "issue_deleted", locale.EN)
 	assert.Contains(t, result, "🗑")
 }
 
@@ -138,7 +139,7 @@ func TestFormatNotification_UnknownEventEmoji(t *testing.T) {
 		},
 	}
 
-	result := h.formatNotification(event, "unknown_type")
+	result := h.formatNotification(event, "unknown_type", locale.EN)
 	assert.Contains(t, result, "📋")
 }
 

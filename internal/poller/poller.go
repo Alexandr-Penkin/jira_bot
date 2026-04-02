@@ -12,6 +12,7 @@ import (
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
+	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 )
@@ -40,6 +41,7 @@ type pendingNotification struct {
 	issueKey  string
 	siteURL   string
 	issue     *jira.Issue
+	lang      locale.Lang
 	authors   map[string]string        // accountID -> displayName
 	changes   map[string]*mergedChange // field -> merged change
 	firstSeen time.Time
@@ -210,7 +212,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			// If already accumulating changes for this issue+chat, just merge.
 			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
 			if _, inPending := p.pending[pendingKey]; inPending {
-				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID)
+				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language))
 				continue
 			}
 
@@ -230,7 +232,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				continue
 			}
 
-			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID)
+			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language))
 		}
 
 		if err := p.subRepo.UpdateLastPolled(ctx, sub.ID, now); err != nil {
@@ -279,7 +281,7 @@ func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
 	return fallback
 }
 
-func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string) {
+func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string, lang locale.Lang) {
 	key := fmt.Sprintf("%d:%s", chatID, issue.Key)
 
 	author, changes := recentChanges(issue, sinceTS, excludeAccountID)
@@ -296,6 +298,7 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 			issueKey:  issue.Key,
 			siteURL:   siteURL,
 			issue:     issue,
+			lang:      lang,
 			authors:   make(map[string]string),
 			changes:   make(map[string]*mergedChange),
 			firstSeen: time.Now(),
@@ -347,6 +350,7 @@ func (p *Poller) flushAllPending() {
 
 func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	issueURL := fmt.Sprintf("%s/browse/%s", pn.siteURL, pn.issueKey)
+	lang := pn.lang
 
 	var sb strings.Builder
 
@@ -355,12 +359,12 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	for _, name := range pn.authors {
 		authorNames = append(authorNames, name)
 	}
-	authorStr := "Someone"
+	authorStr := locale.T(lang, "notif.someone")
 	if len(authorNames) > 0 {
 		authorStr = strings.Join(authorNames, ", ")
 	}
-	fmt.Fprintf(&sb, "👤 %s made updates in [%s](%s)\n",
-		format.EscapeMarkdown(authorStr), pn.issueKey, issueURL)
+	fmt.Fprintf(&sb, "%s\n", locale.T(lang, "notif.updates",
+		format.EscapeMarkdown(authorStr), pn.issueKey, issueURL))
 
 	// Merged changes — skip fields that cancelled out.
 	hasChanges := false
@@ -386,23 +390,23 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 
 	issue := pn.issue
 	sb.WriteString("\n")
-	fmt.Fprintf(&sb, "Summary: %s\n", format.EscapeMarkdown(issue.Fields.Summary))
+	fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.summary"), format.EscapeMarkdown(issue.Fields.Summary))
 	if issue.Fields.Assignee != nil {
-		fmt.Fprintf(&sb, "Assignee: %s\n", format.EscapeMarkdown(issue.Fields.Assignee.DisplayName))
+		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.assignee"), format.EscapeMarkdown(issue.Fields.Assignee.DisplayName))
 	} else {
-		sb.WriteString("Assignee: Unassigned\n")
+		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.assignee"), locale.T(lang, "notif.unassigned"))
 	}
 	if issue.Fields.Reporter != nil {
-		fmt.Fprintf(&sb, "Reporter: %s\n", format.EscapeMarkdown(issue.Fields.Reporter.DisplayName))
+		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.reporter"), format.EscapeMarkdown(issue.Fields.Reporter.DisplayName))
 	}
 	if issue.Fields.Priority != nil {
-		fmt.Fprintf(&sb, "Priority: %s\n", format.EscapeMarkdown(issue.Fields.Priority.Name))
+		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.priority"), format.EscapeMarkdown(issue.Fields.Priority.Name))
 	}
 	if issue.Fields.IssueType != nil {
-		fmt.Fprintf(&sb, "Type of issue: %s\n", format.EscapeMarkdown(issue.Fields.IssueType.Name))
+		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.issue_type"), format.EscapeMarkdown(issue.Fields.IssueType.Name))
 	}
 	if issue.Fields.Status != nil {
-		fmt.Fprintf(&sb, "Status: %s\n", format.EscapeMarkdown(issue.Fields.Status.Name))
+		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.status"), format.EscapeMarkdown(issue.Fields.Status.Name))
 	}
 
 	msg := tgbotapi.NewMessage(pn.chatID, sb.String())

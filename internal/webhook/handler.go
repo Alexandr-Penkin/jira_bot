@@ -226,17 +226,17 @@ func (h *Handler) processEvent(event Event) {
 			continue
 		}
 
+		lang := locale.Default
+		u, _ := h.userRepo.GetByTelegramID(ctx, matched[i].TelegramUserID)
+
 		// Skip notifications about changes made by the current user.
-		if event.User != nil && event.User.AccountID != "" {
-			u, err := h.userRepo.GetByTelegramID(ctx, matched[i].TelegramUserID)
-			if err == nil && u != nil && u.JiraAccountID == event.User.AccountID {
-				h.log.Debug().
-					Int64("chat_id", matched[i].TelegramChatID).
-					Str("issue", issueKey).
-					Msg("webhook: skipping self-triggered notification")
-				sent[matched[i].TelegramChatID] = true
-				continue
-			}
+		if event.User != nil && event.User.AccountID != "" && u != nil && u.JiraAccountID == event.User.AccountID {
+			h.log.Debug().
+				Int64("chat_id", matched[i].TelegramChatID).
+				Str("issue", issueKey).
+				Msg("webhook: skipping self-triggered notification")
+			sent[matched[i].TelegramChatID] = true
+			continue
 		}
 
 		if issueKey != "" && !h.dedup.Allow(matched[i].TelegramChatID, issueKey) {
@@ -250,7 +250,11 @@ func (h *Handler) processEvent(event Event) {
 
 		sent[matched[i].TelegramChatID] = true
 
-		text := h.formatNotification(event, eventType)
+		if u != nil && u.Language != "" {
+			lang = locale.FromString(u.Language)
+		}
+
+		text := h.formatNotification(event, eventType, lang)
 		msg := tgbotapi.NewMessage(matched[i].TelegramChatID, text)
 		msg.ParseMode = tgbotapi.ModeMarkdown
 		msg.DisableWebPagePreview = true
@@ -317,9 +321,7 @@ func (h *Handler) findMentionSubscriptions(ctx context.Context, event Event) []s
 	return subs
 }
 
-func (h *Handler) formatNotification(event Event, eventType string) string {
-	// Webhook notifications use default locale (no per-subscription lang yet).
-	lang := locale.Default
+func (h *Handler) formatNotification(event Event, eventType string, lang locale.Lang) string {
 
 	if event.Issue == nil {
 		return locale.T(lang, "notif.event", eventType)

@@ -218,6 +218,15 @@ var ru = map[string]string{
 	"notif.changed":     "Изменено",
 	"notif.comment_by":  "Комментарий от",
 
+	// Poller notifications
+	"notif.updates":    "👤 %s обновил(а) [%s](%s)",
+	"notif.someone":    "Кто-то",
+	"notif.summary":    "Описание",
+	"notif.unassigned": "Не назначен",
+	"notif.reporter":   "Автор",
+	"notif.priority":   "Приоритет",
+	"notif.issue_type": "Тип задачи",
+
 	// Daily
 	"btn.daily":             "📝 Daily",
 	"daily.done":            "Сделал",

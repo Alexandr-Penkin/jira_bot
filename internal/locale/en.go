@@ -218,6 +218,15 @@ var en = map[string]string{
 	"notif.changed":     "Changed",
 	"notif.comment_by":  "Comment by",
 
+	// Poller notifications
+	"notif.updates":    "👤 %s made updates in [%s](%s)",
+	"notif.someone":    "Someone",
+	"notif.summary":    "Summary",
+	"notif.unassigned": "Unassigned",
+	"notif.reporter":   "Reporter",
+	"notif.priority":   "Priority",
+	"notif.issue_type": "Type of issue",
+
 	// Daily
 	"btn.daily":             "📝 Daily",
 	"daily.done":            "Done",
