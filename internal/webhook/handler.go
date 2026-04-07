@@ -363,12 +363,46 @@ func (h *Handler) formatNotification(event Event, eventType string, lang locale.
 
 	if event.Changelog != nil {
 		for _, item := range event.Changelog.Items {
-			fmt.Fprintf(&sb, "%s *%s*: %s → %s\n",
-				locale.T(lang, "notif.changed"),
-				format.EscapeMarkdown(item.Field),
-				format.EscapeMarkdown(item.FromString),
-				format.EscapeMarkdown(item.ToString),
-			)
+			fieldName := item.Field
+			if fieldName == "" {
+				fieldName = item.FieldID
+			}
+			if fieldName == "" {
+				continue
+			}
+			fromVal := item.FromString
+			if fromVal == "" {
+				fromVal = item.From
+			}
+			toVal := item.ToString
+			if toVal == "" {
+				toVal = item.To
+			}
+			if fromVal == toVal {
+				continue
+			}
+			switch {
+			case fromVal != "" && toVal != "":
+				fmt.Fprintf(&sb, "%s *%s*: %s → %s\n",
+					locale.T(lang, "notif.changed"),
+					format.EscapeMarkdown(fieldName),
+					format.EscapeMarkdown(fromVal),
+					format.EscapeMarkdown(toVal),
+				)
+			case toVal != "":
+				fmt.Fprintf(&sb, "%s *%s*: %s\n",
+					locale.T(lang, "notif.changed"),
+					format.EscapeMarkdown(fieldName),
+					format.EscapeMarkdown(toVal),
+				)
+			default:
+				fmt.Fprintf(&sb, "%s *%s*: %s → %s\n",
+					locale.T(lang, "notif.changed"),
+					format.EscapeMarkdown(fieldName),
+					format.EscapeMarkdown(fromVal),
+					format.EscapeMarkdown(locale.T(lang, "notif.cleared")),
+				)
+			}
 		}
 	}
 

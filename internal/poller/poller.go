@@ -30,8 +30,30 @@ const (
 // (e.g. Status: Open → In Progress → Done becomes Status: Open → Done).
 type mergedChange struct {
 	Field      string
+	From       string
 	FromString string
+	To         string
 	ToString   string
+}
+
+// changeDisplayValue returns the human-readable value for one side of a
+// change item, falling back to the raw ID when the *String form is empty
+// (typical for some custom field types like user pickers or sprints).
+func changeDisplayValue(str, raw string) string {
+	if str != "" {
+		return str
+	}
+	return raw
+}
+
+// changeFieldName returns the display name for a changelog field, falling
+// back to the field ID when the friendly name is missing (rare but happens
+// for some custom fields).
+func changeFieldName(field, fieldID string) string {
+	if field != "" {
+		return field
+	}
+	return fieldID
 }
 
 // pendingNotification accumulates changes for a single issue
@@ -313,14 +335,21 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 		pn.authors[author.AccountID] = author.DisplayName
 	}
 
-	// Merge changes: keep the original FromString, update ToString.
+	// Merge changes: keep the original "from" side, update the "to" side.
 	for _, c := range changes {
-		if existing, ok := pn.changes[c.Field]; ok {
+		key := changeFieldName(c.Field, c.FieldID)
+		if key == "" {
+			continue
+		}
+		if existing, ok := pn.changes[key]; ok {
+			existing.To = c.To
 			existing.ToString = c.ToString
 		} else {
-			pn.changes[c.Field] = &mergedChange{
-				Field:      c.Field,
+			pn.changes[key] = &mergedChange{
+				Field:      key,
+				From:       c.From,
 				FromString: c.FromString,
+				To:         c.To,
 				ToString:   c.ToString,
 			}
 		}
@@ -366,25 +395,33 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	fmt.Fprintf(&sb, "%s\n", locale.T(lang, "notif.updates",
 		format.EscapeMarkdown(authorStr), pn.issueKey, issueURL))
 
-	// Merged changes — skip fields that cancelled out.
+	// Merged changes — skip fields that cancelled out or carry no info.
 	hasChanges := false
 	for _, c := range pn.changes {
-		if c.FromString != "" && c.FromString == c.ToString {
+		fromVal := changeDisplayValue(c.FromString, c.From)
+		toVal := changeDisplayValue(c.ToString, c.To)
+		if fromVal == toVal {
 			continue
 		}
 		if !hasChanges {
 			sb.WriteString("\n")
 			hasChanges = true
 		}
-		if c.FromString != "" {
+		switch {
+		case fromVal != "" && toVal != "":
 			fmt.Fprintf(&sb, "%s: %s → %s\n",
 				format.EscapeMarkdown(c.Field),
-				format.EscapeMarkdown(c.FromString),
-				format.EscapeMarkdown(c.ToString))
-		} else {
+				format.EscapeMarkdown(fromVal),
+				format.EscapeMarkdown(toVal))
+		case toVal != "":
 			fmt.Fprintf(&sb, "%s: %s\n",
 				format.EscapeMarkdown(c.Field),
-				format.EscapeMarkdown(c.ToString))
+				format.EscapeMarkdown(toVal))
+		default:
+			fmt.Fprintf(&sb, "%s: %s → %s\n",
+				format.EscapeMarkdown(c.Field),
+				format.EscapeMarkdown(fromVal),
+				format.EscapeMarkdown(locale.T(lang, "notif.cleared")))
 		}
 	}
 

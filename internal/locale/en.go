@@ -223,6 +223,7 @@ var en = map[string]string{
 	"notif.someone":    "Someone",
 	"notif.summary":    "Summary",
 	"notif.unassigned": "Unassigned",
+	"notif.cleared":    "cleared",
 	"notif.reporter":   "Reporter",
 	"notif.priority":   "Priority",
 	"notif.issue_type": "Type of issue",

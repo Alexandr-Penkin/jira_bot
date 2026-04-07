@@ -28,22 +28,26 @@ type ChangeHistory struct {
 
 type ChangeItem struct {
 	Field      string `json:"field"`
+	FieldType  string `json:"fieldtype"`
+	FieldID    string `json:"fieldId"`
+	From       string `json:"from"`
 	FromString string `json:"fromString"`
+	To         string `json:"to"`
 	ToString   string `json:"toString"`
 }
 
 type IssueFields struct {
-	Summary     string       `json:"summary"`
-	Description *ADFDocument `json:"description"`
-	Status      *Status      `json:"status"`
-	Priority    *Priority    `json:"priority"`
-	Assignee    *JiraUser    `json:"assignee"`
-	Reporter    *JiraUser    `json:"reporter"`
-	IssueType   *IssueType   `json:"issuetype"`
-	Project     *Project     `json:"project"`
-	Created     string       `json:"created"`
-	Updated     string       `json:"updated"`
-	DueDate     string       `json:"duedate"`
+	Summary        string       `json:"summary"`
+	Description    *ADFDocument `json:"description"`
+	Status         *Status      `json:"status"`
+	Priority       *Priority    `json:"priority"`
+	Assignee       *JiraUser    `json:"assignee"`
+	Reporter       *JiraUser    `json:"reporter"`
+	IssueType      *IssueType   `json:"issuetype"`
+	Project        *Project     `json:"project"`
+	Created        string       `json:"created"`
+	Updated        string       `json:"updated"`
+	DueDate        string       `json:"duedate"`
 	Labels         []string     `json:"labels"`
 	StoryPoints    *float64     `json:"-"`
 	CustomAssignee *JiraUser    `json:"-"`
@@ -139,9 +143,9 @@ type Filter struct {
 }
 
 type JiraField struct {
-	ID     string     `json:"id"`
-	Name   string     `json:"name"`
-	Custom bool       `json:"custom"`
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Custom bool         `json:"custom"`
 	Schema *FieldSchema `json:"schema,omitempty"`
 }
 

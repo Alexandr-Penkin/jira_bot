@@ -223,6 +223,7 @@ var ru = map[string]string{
 	"notif.someone":    "Кто-то",
 	"notif.summary":    "Описание",
 	"notif.unassigned": "Не назначен",
+	"notif.cleared":    "очищено",
 	"notif.reporter":   "Автор",
 	"notif.priority":   "Приоритет",
 	"notif.issue_type": "Тип задачи",
