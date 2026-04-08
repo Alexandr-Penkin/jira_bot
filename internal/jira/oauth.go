@@ -64,6 +64,9 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 			"read:sprint:jira-software",
 			"read:board-scope:jira-software",
 			"read:project:jira",
+			"read:webhook:jira",
+			"write:webhook:jira",
+			"delete:webhook:jira",
 			"offline_access",
 		}
 	}

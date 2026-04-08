@@ -3,11 +3,9 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/locale"
 )
 
@@ -69,33 +67,7 @@ func (h *Handler) handleStoryPointsFieldStart(ctx context.Context, chatID, userI
 
 // handleStoryPointsFieldCallback handles sp_select callbacks.
 func (h *Handler) handleStoryPointsFieldCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
-	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
-
-	chatID := cq.Message.Chat.ID
-	userID := cq.From.ID
-	lang := h.getLang(ctx, userID)
-
-	if len(parts) < 2 {
-		return
-	}
-
-	fieldID := parts[1]
-	fieldName := fieldID
-	if len(parts) >= 3 {
-		fieldName = strings.Join(parts[2:], ":")
-	}
-
-	if err := h.userRepo.SetStoryPointsField(ctx, userID, fieldID); err != nil {
-		h.log.Error().Err(err).Msg("failed to save story points field")
-		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
-		return
-	}
-
-	text := locale.T(lang, "spfield.saved", format.EscapeMarkdown(fieldName))
-	editMsg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
-		text, menuButtonKeyboard(lang))
-	editMsg.ParseMode = tgbotapi.ModeMarkdown
-	_, _ = h.api.Send(editMsg)
+	h.handleFieldSelectCallback(ctx, cq, parts, h.userRepo.SetStoryPointsField, "spfield.saved", "failed to save story points field")
 }
 
 // handleStoryPointsFieldReset resets the story points field to default.

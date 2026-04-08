@@ -67,6 +67,11 @@ type pendingNotification struct {
 	authors   map[string]string        // accountID -> displayName
 	changes   map[string]*mergedChange // field -> merged change
 	firstSeen time.Time
+	// isMention is true when this notification was triggered by a comment
+	// mention rather than by changelog entries. Mention notifications are
+	// allowed to have an empty changes section; everything else must have
+	// at least one real change to be sent.
+	isMention bool
 }
 
 // Poller periodically queries the Jira API for issue changes
@@ -94,7 +99,7 @@ type Poller struct {
 	lastPollAt  time.Time
 }
 
-func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval time.Duration, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
+func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
@@ -163,13 +168,25 @@ func (p *Poller) poll(ctx context.Context) {
 		return
 	}
 
+	// Cap each user's work at the poll interval so a single slow Jira
+	// site can't starve the rest of the users for many minutes.
+	userBudget := p.interval
+	if userBudget < 30*time.Second {
+		userBudget = 30 * time.Second
+	}
+
 	for _, userID := range userIDs {
+		if ctx.Err() != nil {
+			return
+		}
 		subs, err := p.subRepo.GetActiveByUser(ctx, userID)
 		if err != nil {
 			p.log.Error().Err(err).Int64("user_id", userID).Msg("poller: failed to get user subscriptions")
 			continue
 		}
-		p.pollUser(ctx, userID, subs)
+		userCtx, cancel := context.WithTimeout(ctx, userBudget)
+		p.pollUser(userCtx, userID, subs)
+		cancel()
 	}
 }
 
@@ -231,10 +248,12 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				}
 			}
 
+			isMention := sub.SubscriptionType == storage.SubTypeMyMentions
+
 			// If already accumulating changes for this issue+chat, just merge.
 			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
 			if _, inPending := p.pending[pendingKey]; inPending {
-				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language))
+				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
 				continue
 			}
 
@@ -254,7 +273,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				continue
 			}
 
-			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language))
+			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
 		}
 
 		if err := p.subRepo.UpdateLastPolled(ctx, sub.ID, now); err != nil {
@@ -268,11 +287,15 @@ func (p *Poller) buildJQL(sub *storage.Subscription) string {
 	case storage.SubTypeMyNewIssues:
 		return "assignee = currentUser()"
 	case storage.SubTypeMyMentions:
-		// Jira doesn't have a direct "mentioned" JQL — we look for issues
-		// where the current user is in the watcher list OR was mentioned
-		// via text search. A practical approximation is "watcher = currentUser()"
-		// combined with comment activity.
-		return "watcher = currentUser()"
+		// Jira has no direct "mentioned me" JQL clause, so we widen the
+		// pre-filter to any issue the user is involved with in a way
+		// that makes a mention plausible: watching, assigned, reported,
+		// or having voted/logged work. The actual mention check happens
+		// later in isUserMentionedInComments by scanning recent comment
+		// ADFs. Pure cold-mention (someone @-mentions a user with no
+		// prior involvement on the issue) still requires the webhook
+		// path — Jira Cloud has no JQL clause for "I was mentioned".
+		return "(watcher = currentUser() OR assignee = currentUser() OR reporter = currentUser() OR voter = currentUser() OR worklogAuthor = currentUser())"
 	case storage.SubTypeMyWatched:
 		return "watcher = currentUser()"
 	case storage.SubTypeProjectUpdates:
@@ -289,10 +312,33 @@ func (p *Poller) buildJQL(sub *storage.Subscription) string {
 		if sub.JiraFilterJQL == "" {
 			return ""
 		}
-		return sub.JiraFilterJQL
+		// User-supplied JQL may contain a trailing ORDER BY (which we
+		// will re-add ourselves) and top-level OR clauses. Strip ORDER
+		// BY and wrap in parentheses so the caller can safely AND on
+		// additional predicates without changing operator precedence.
+		cleaned := stripOrderBy(sub.JiraFilterJQL)
+		if cleaned == "" {
+			return ""
+		}
+		return "(" + cleaned + ")"
 	default:
 		return ""
 	}
+}
+
+// stripOrderBy removes a top-level "ORDER BY ..." clause from a JQL
+// string. Returns the trimmed remainder so it can be safely composed with
+// other predicates.
+func stripOrderBy(jql string) string {
+	jql = strings.TrimSpace(jql)
+	upper := strings.ToUpper(jql)
+	if idx := strings.LastIndex(upper, " ORDER BY "); idx != -1 {
+		return strings.TrimSpace(jql[:idx])
+	}
+	if strings.HasPrefix(upper, "ORDER BY ") {
+		return ""
+	}
+	return jql
 }
 
 func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
@@ -303,13 +349,20 @@ func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
 	return fallback
 }
 
-func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string, lang locale.Lang) {
+func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string, lang locale.Lang, isMention bool) {
 	key := fmt.Sprintf("%d:%s", chatID, issue.Key)
 
-	author, changes := recentChanges(issue, sinceTS, excludeAccountID)
+	authors, changes := recentChanges(issue, sinceTS, excludeAccountID)
 
-	// All recent changes were made by the current user — skip notification.
-	if author == nil && len(changes) == 0 {
+	// Skip if there is nothing to report. Mention notifications are
+	// allowed through even when changelog is empty in this window —
+	// the trigger for them is the comment mention itself.
+	if len(changes) == 0 && !isMention {
+		return
+	}
+	// Non-mention notification with no recent changes by anyone other than
+	// the current user — also skip (would produce an empty notification).
+	if len(authors) == 0 && len(changes) == 0 {
 		return
 	}
 
@@ -324,14 +377,17 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 			authors:   make(map[string]string),
 			changes:   make(map[string]*mergedChange),
 			firstSeen: time.Now(),
+			isMention: isMention,
 		}
 		p.pending[key] = pn
+	} else if isMention {
+		pn.isMention = true
 	}
 
 	// Always keep the latest issue state.
 	pn.issue = issue
 
-	if author != nil {
+	for _, author := range authors {
 		pn.authors[author.AccountID] = author.DisplayName
 	}
 
@@ -381,6 +437,47 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	issueURL := fmt.Sprintf("%s/browse/%s", pn.siteURL, pn.issueKey)
 	lang := pn.lang
 
+	// Build the changes section first so we can bail out when there is
+	// nothing meaningful to report (and avoid sending an empty
+	// "X updated MAIN-XXX" with no body).
+	var changesSB strings.Builder
+	hasChanges := false
+	for _, c := range pn.changes {
+		fromVal := changeDisplayValue(c.FromString, c.From)
+		toVal := changeDisplayValue(c.ToString, c.To)
+		if fromVal == toVal {
+			continue
+		}
+		if !hasChanges {
+			changesSB.WriteString("\n")
+			hasChanges = true
+		}
+		switch {
+		case fromVal != "" && toVal != "":
+			fmt.Fprintf(&changesSB, "%s: %s → %s\n",
+				format.EscapeMarkdown(c.Field),
+				format.EscapeMarkdown(fromVal),
+				format.EscapeMarkdown(toVal))
+		case toVal != "":
+			fmt.Fprintf(&changesSB, "%s: %s\n",
+				format.EscapeMarkdown(c.Field),
+				format.EscapeMarkdown(toVal))
+		default:
+			fmt.Fprintf(&changesSB, "%s: %s → %s\n",
+				format.EscapeMarkdown(c.Field),
+				format.EscapeMarkdown(fromVal),
+				format.EscapeMarkdown(locale.T(lang, "notif.cleared")))
+		}
+	}
+
+	if !hasChanges && !pn.isMention {
+		p.log.Debug().
+			Int64("chat_id", pn.chatID).
+			Str("issue", pn.issueKey).
+			Msg("poller: skipping notification with no changes")
+		return
+	}
+
 	var sb strings.Builder
 
 	// Collect author names.
@@ -395,35 +492,7 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	fmt.Fprintf(&sb, "%s\n", locale.T(lang, "notif.updates",
 		format.EscapeMarkdown(authorStr), pn.issueKey, issueURL))
 
-	// Merged changes — skip fields that cancelled out or carry no info.
-	hasChanges := false
-	for _, c := range pn.changes {
-		fromVal := changeDisplayValue(c.FromString, c.From)
-		toVal := changeDisplayValue(c.ToString, c.To)
-		if fromVal == toVal {
-			continue
-		}
-		if !hasChanges {
-			sb.WriteString("\n")
-			hasChanges = true
-		}
-		switch {
-		case fromVal != "" && toVal != "":
-			fmt.Fprintf(&sb, "%s: %s → %s\n",
-				format.EscapeMarkdown(c.Field),
-				format.EscapeMarkdown(fromVal),
-				format.EscapeMarkdown(toVal))
-		case toVal != "":
-			fmt.Fprintf(&sb, "%s: %s\n",
-				format.EscapeMarkdown(c.Field),
-				format.EscapeMarkdown(toVal))
-		default:
-			fmt.Fprintf(&sb, "%s: %s → %s\n",
-				format.EscapeMarkdown(c.Field),
-				format.EscapeMarkdown(fromVal),
-				format.EscapeMarkdown(locale.T(lang, "notif.cleared")))
-		}
-	}
+	sb.WriteString(changesSB.String())
 
 	issue := pn.issue
 	sb.WriteString("\n")
@@ -495,16 +564,24 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 	return false
 }
 
-// recentChanges extracts changelog entries since the given timestamp.
-// If no recent entries match but the changelog is non-empty, the author
-// of the most recent history entry is returned as a fallback.
-func recentChanges(issue *jira.Issue, sinceTS int64, excludeAccountID string) (*jira.JiraUser, []jira.ChangeItem) {
+// recentChanges extracts changelog entries created strictly after sinceTS,
+// skipping entries authored by excludeAccountID. Returns (nil, nil) when
+// the changelog has no matching entries — callers must NOT fabricate an
+// author from older history, otherwise they would emit an empty/incorrect
+// notification when Jira bumps the issue's `updated` timestamp without a
+// corresponding recent changelog entry.
+//
+// All distinct authors in the window are returned so a merged
+// notification can credit every person who touched the issue, not just
+// the first one.
+func recentChanges(issue *jira.Issue, sinceTS int64, excludeAccountID string) ([]*jira.JiraUser, []jira.ChangeItem) {
 	if issue.Changelog == nil {
 		return nil, nil
 	}
 
 	sinceTime := time.Unix(sinceTS, 0)
-	var author *jira.JiraUser
+	var authors []*jira.JiraUser
+	seen := make(map[string]bool)
 	var items []jira.ChangeItem
 
 	for _, h := range issue.Changelog.Histories {
@@ -512,28 +589,19 @@ func recentChanges(issue *jira.Issue, sinceTS int64, excludeAccountID string) (*
 		if err != nil {
 			continue
 		}
-		if created.Before(sinceTime) {
+		if !created.After(sinceTime) {
 			continue
 		}
 		// Skip changes made by the current user.
 		if excludeAccountID != "" && h.Author != nil && h.Author.AccountID == excludeAccountID {
 			continue
 		}
-		if author == nil {
-			author = h.Author
+		if h.Author != nil && !seen[h.Author.AccountID] {
+			seen[h.Author.AccountID] = true
+			authors = append(authors, h.Author)
 		}
 		items = append(items, h.Items...)
 	}
 
-	// Fallback: if no recent entries matched, use the latest changelog
-	// entry's author so we never show "Someone" when data is available.
-	if author == nil && len(issue.Changelog.Histories) > 0 {
-		last := issue.Changelog.Histories[len(issue.Changelog.Histories)-1]
-		// Don't use fallback if the last author is the excluded user.
-		if excludeAccountID == "" || last.Author == nil || last.Author.AccountID != excludeAccountID {
-			author = last.Author
-		}
-	}
-
-	return author, items
+	return authors, items
 }

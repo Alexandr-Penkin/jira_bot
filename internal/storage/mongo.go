@@ -66,12 +66,34 @@ func ensureIndexes(ctx context.Context, db *mongo.Database, log zerolog.Logger) 
 			},
 		},
 		{
+			// Hot path: webhook handler fan-out by project key.
 			collection: "subscriptions",
 			model: mongo.IndexModel{
 				Keys: bson.D{
 					{Key: "is_active", Value: 1},
-					{Key: "event_types", Value: 1},
+					{Key: "subscription_type", Value: 1},
 					{Key: "jira_project_key", Value: 1},
+				},
+			},
+		},
+		{
+			// Hot path: webhook handler fan-out by issue key.
+			collection: "subscriptions",
+			model: mongo.IndexModel{
+				Keys: bson.D{
+					{Key: "is_active", Value: 1},
+					{Key: "subscription_type", Value: 1},
+					{Key: "jira_issue_key", Value: 1},
+				},
+			},
+		},
+		{
+			// Hot path: poller GetActiveByUser + mention lookup by user IDs.
+			collection: "subscriptions",
+			model: mongo.IndexModel{
+				Keys: bson.D{
+					{Key: "is_active", Value: 1},
+					{Key: "telegram_user_id", Value: 1},
 				},
 			},
 		},
@@ -90,6 +112,24 @@ func ensureIndexes(ctx context.Context, db *mongo.Database, log zerolog.Logger) 
 					{Key: "telegram_chat_id", Value: 1},
 					{Key: "is_active", Value: 1},
 				},
+			},
+		},
+		{
+			collection: "webhook_registrations",
+			model: mongo.IndexModel{
+				Keys: bson.D{{Key: "telegram_user_id", Value: 1}},
+			},
+		},
+		{
+			collection: "webhook_registrations",
+			model: mongo.IndexModel{
+				Keys: bson.D{{Key: "subscription_id", Value: 1}},
+			},
+		},
+		{
+			collection: "webhook_registrations",
+			model: mongo.IndexModel{
+				Keys: bson.D{{Key: "expires_at", Value: 1}},
 			},
 		},
 	}

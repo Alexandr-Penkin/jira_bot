@@ -32,6 +32,8 @@ type PendingSiteSelection struct {
 type CallbackServer struct {
 	oauth        *OAuthClient
 	userRepo     *storage.UserRepo
+	subRepo      *storage.SubscriptionRepo
+	webhookMgr   *WebhookManager
 	tgAPI        *tgbotapi.BotAPI
 	log          zerolog.Logger
 	server       *http.Server
@@ -40,10 +42,12 @@ type CallbackServer struct {
 	pendingSites map[int64]*PendingSiteSelection // keyed by TelegramUserID
 }
 
-func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *CallbackServer {
+func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, webhookMgr *WebhookManager, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *CallbackServer {
 	cs := &CallbackServer{
 		oauth:        oauth,
 		userRepo:     userRepo,
+		subRepo:      subRepo,
+		webhookMgr:   webhookMgr,
 		tgAPI:        tgAPI,
 		log:          log,
 		pendingSites: make(map[int64]*PendingSiteSelection),
@@ -251,6 +255,17 @@ func (cs *CallbackServer) finalizeSiteConnection(ctx context.Context, telegramUs
 		Int64("telegram_user_id", telegramUserID).
 		Str("jira_site", resource.Name).
 		Msg("user connected to Jira")
+
+	// Re-fetch the persisted user so the webhook manager gets a copy
+	// with decrypted tokens (Upsert leaves the input struct's tokens
+	// untouched but requires the repo's decrypt path).
+	if cs.subRepo != nil && cs.webhookMgr != nil {
+		if subs, subErr := cs.subRepo.GetActiveByUser(ctx, telegramUserID); subErr == nil && len(subs) > 0 {
+			cs.webhookMgr.RegisterForExistingSubscriptions(ctx, telegramUserID, subs)
+		} else if subErr != nil {
+			cs.log.Warn().Err(subErr).Int64("user_id", telegramUserID).Msg("failed to read subscriptions for webhook registration")
+		}
+	}
 
 	lang := cs.getUserLang(ctx, telegramUserID)
 	msg := tgbotapi.NewMessage(telegramUserID, locale.T(lang, "connect.success", format.EscapeMarkdown(resource.Name)))

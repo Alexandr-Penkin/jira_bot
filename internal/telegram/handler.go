@@ -43,6 +43,7 @@ type Handler struct {
 	userRepo         *storage.UserRepo
 	subRepo          *storage.SubscriptionRepo
 	scheduleRepo     *storage.ScheduleRepo
+	webhookMgr       *jira.WebhookManager
 	onScheduleChange func()
 	log              zerolog.Logger
 	states           *stateManager
@@ -50,7 +51,7 @@ type Handler struct {
 	pollerRef        *poller.Poller
 }
 
-func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, log zerolog.Logger, adminID int64) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64) *Handler {
 	return &Handler{
 		api:          api,
 		oauth:        oauth,
@@ -58,6 +59,7 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 		userRepo:     userRepo,
 		subRepo:      subRepo,
 		scheduleRepo: scheduleRepo,
+		webhookMgr:   webhookMgr,
 		log:          log,
 		states:       newStateManager(),
 		adminID:      adminID,
@@ -676,7 +678,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 
 // --- Static pages ---
 
-func (h *Handler) handleStart(chatID int64, userID int64, lang locale.Lang) tgbotapi.MessageConfig {
+func (h *Handler) handleStart(chatID, userID int64, lang locale.Lang) tgbotapi.MessageConfig {
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "start.welcome"))
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	if h.isAdmin(userID) {

@@ -12,6 +12,7 @@ import (
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/poller"
+	"SleepJiraBot/internal/storage"
 )
 
 const adminUsersPageSize = 10
@@ -86,7 +87,8 @@ func (h *Handler) handleAdminUsers(ctx context.Context, chatID int64, page int, 
 	var sb strings.Builder
 	sb.WriteString(locale.T(lang, "admin.users_title", page+1))
 
-	for i, u := range users {
+	for i := range users {
+		u := &users[i]
 		num := int(skip) + i + 1
 		created := time.Unix(u.CreatedTS, 0).Format("2006-01-02")
 		if u.AccessToken != "" || u.JiraSiteURL != "" {
@@ -94,21 +96,22 @@ func (h *Handler) handleAdminUsers(ctx context.Context, chatID int64, page int, 
 			if site == "" {
 				site = "—"
 			}
-			sb.WriteString(fmt.Sprintf(locale.T(lang, "admin.user_entry"),
+			fmt.Fprintf(&sb, locale.T(lang, "admin.user_entry"),
 				num, u.TelegramUserID,
 				format.EscapeMarkdown(site),
 				format.EscapeMarkdown(site),
-				created))
+				created)
 		} else {
-			sb.WriteString(fmt.Sprintf(locale.T(lang, "admin.user_disconnected"),
-				num, u.TelegramUserID, created))
+			fmt.Fprintf(&sb, locale.T(lang, "admin.user_disconnected"),
+				num, u.TelegramUserID, created)
 		}
 	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 
 	// User action buttons
-	for _, u := range users {
+	for i := range users {
+		u := &users[i]
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
 				fmt.Sprintf("👤 %d", u.TelegramUserID),
@@ -235,6 +238,9 @@ func (h *Handler) handleAdminDelete(ctx context.Context, cq *tgbotapi.CallbackQu
 	}
 
 	var errs []string
+	if h.webhookMgr != nil {
+		h.webhookMgr.DeleteAllForUser(ctx, targetID)
+	}
 	if err := h.subRepo.DeleteByUserID(ctx, targetID); err != nil {
 		errs = append(errs, "subscriptions: "+err.Error())
 	}
@@ -254,7 +260,7 @@ func (h *Handler) handleAdminDelete(ctx context.Context, cq *tgbotapi.CallbackQu
 	h.sendMessage(msg)
 }
 
-func (h *Handler) handleAdminBroadcast(ctx context.Context, chatID int64, userID int64, text string) {
+func (h *Handler) handleAdminBroadcast(ctx context.Context, chatID, userID int64, text string) {
 	lang := h.getLang(ctx, userID)
 
 	users, err := h.userRepo.ListAll(ctx, 0, 10000)
@@ -263,30 +269,38 @@ func (h *Handler) handleAdminBroadcast(ctx context.Context, chatID int64, userID
 		return
 	}
 
-	var sent, failed int
-	for _, u := range users {
-		if u.AccessToken == "" {
-			continue
-		}
-		msg := tgbotapi.NewMessage(u.TelegramUserID, text)
-		msg.ParseMode = tgbotapi.ModeMarkdown
-		if _, err := h.api.Send(msg); err != nil {
-			failed++
-		} else {
-			sent++
-		}
-		// Telegram rate limit: ~30 messages/second.
-		time.Sleep(50 * time.Millisecond)
-	}
+	// Acknowledge immediately so the admin's update handler isn't blocked
+	// for the minutes it can take to walk ~10k recipients at a 50ms-each
+	// rate-limit-respecting pace.
+	h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "admin.broadcast_started")))
 
-	if sent == 0 && failed == 0 {
-		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "admin.broadcast_empty")))
-		return
-	}
+	go func(recipients []storage.User) {
+		var sent, failed int
+		for i := range recipients {
+			u := &recipients[i]
+			if u.AccessToken == "" {
+				continue
+			}
+			msg := tgbotapi.NewMessage(u.TelegramUserID, text)
+			msg.ParseMode = tgbotapi.ModeMarkdown
+			if _, err := h.api.Send(msg); err != nil {
+				failed++
+			} else {
+				sent++
+			}
+			// Telegram rate limit: ~30 messages/second.
+			time.Sleep(50 * time.Millisecond)
+		}
 
-	result := tgbotapi.NewMessage(chatID, locale.T(lang, "admin.broadcast_done", sent, failed))
-	result.ReplyMarkup = adminMenuKeyboard(lang)
-	h.sendMessage(result)
+		if sent == 0 && failed == 0 {
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "admin.broadcast_empty")))
+			return
+		}
+
+		result := tgbotapi.NewMessage(chatID, locale.T(lang, "admin.broadcast_done", sent, failed))
+		result.ReplyMarkup = adminMenuKeyboard(lang)
+		h.sendMessage(result)
+	}(users)
 }
 
 func (h *Handler) handleAdminPoller(chatID int64, lang locale.Lang) {

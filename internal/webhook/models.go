@@ -1,5 +1,7 @@
 package webhook
 
+import "SleepJiraBot/internal/jira"
+
 type Event struct {
 	WebhookEvent string     `json:"webhookEvent"`
 	Timestamp    int64      `json:"timestamp"`
@@ -42,9 +44,11 @@ type User struct {
 }
 
 type Comment struct {
-	ID     string `json:"id"`
-	Body   string `json:"body"`
-	Author *User  `json:"author"`
+	ID string `json:"id"`
+	// Body is an Atlassian Document Format tree, not plain text. Jira
+	// Cloud webhooks for v3 always deliver comment bodies as ADF.
+	Body   *jira.ADFDocument `json:"body"`
+	Author *User             `json:"author"`
 }
 
 type Changelog struct {

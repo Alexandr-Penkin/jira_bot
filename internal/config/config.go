@@ -57,9 +57,12 @@ func Load() (*Config, error) {
 		return nil, errors.New("ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)")
 	}
 
-	if cfg.JiraWebhookSecret == "" {
-		return nil, errors.New("JIRA_WEBHOOK_SECRET is required for webhook signature verification")
-	}
+	// JIRA_WEBHOOK_SECRET is optional: Jira Cloud's dynamic-webhook
+	// registration API (POST /rest/api/3/webhook) does not expose a
+	// per-webhook signing-secret field, so payloads arrive unsigned by
+	// default. When the secret is set, the webhook handler will verify
+	// X-Hub-Signature; when empty, verification is skipped and the URL
+	// should be protected by obscurity / reverse-proxy auth.
 
 	if v := os.Getenv("ADMIN_TELEGRAM_ID"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)

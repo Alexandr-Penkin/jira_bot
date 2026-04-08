@@ -370,9 +370,10 @@ var en = map[string]string{
 	"admin.user_deleted":         "User `%d` deleted with all subscriptions and schedules.",
 	"admin.user_not_found":       "User not found.",
 
-	"admin.broadcast_enter": "Enter message to broadcast to all connected users:",
-	"admin.broadcast_done":  "Broadcast sent to %d users (%d failed).",
-	"admin.broadcast_empty": "No connected users to send to.",
+	"admin.broadcast_enter":   "Enter message to broadcast to all connected users:",
+	"admin.broadcast_started": "Broadcast started. You will be notified when it finishes.",
+	"admin.broadcast_done":    "Broadcast sent to %d users (%d failed).",
+	"admin.broadcast_empty":   "No connected users to send to.",
 
 	"admin.poller_status": "*⚙️ Poller Status*\n\n" +
 		"Poll interval: %s\n" +

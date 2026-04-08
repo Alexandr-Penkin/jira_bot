@@ -83,7 +83,7 @@ func TestNewCallbackServer_Routes(t *testing.T) {
 		RedirectURI:  "http://localhost/callback",
 	}, zerolog.Nop())
 
-	cs := NewCallbackServer(context.Background(), ":0", oauth, nil, nil, zerolog.Nop())
+	cs := NewCallbackServer(context.Background(), ":0", oauth, nil, nil, nil, nil, zerolog.Nop())
 	assert.NotNil(t, cs)
 	assert.NotNil(t, cs.server)
 }

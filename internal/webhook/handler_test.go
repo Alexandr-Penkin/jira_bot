@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"SleepJiraBot/internal/format"
+	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
 )
 
@@ -106,7 +107,11 @@ func TestFormatNotification_CommentEvent(t *testing.T) {
 			},
 		},
 		Comment: &Comment{
-			Body:   "A comment",
+			Body: &jira.ADFDocument{
+				Type:    "doc",
+				Version: 1,
+				Content: []jira.ADFNode{{Type: "paragraph", Content: []jira.ADFNode{{Type: "text", Text: "A comment"}}}},
+			},
 			Author: &User{DisplayName: "Commenter"},
 		},
 	}

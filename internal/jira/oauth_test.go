@@ -19,7 +19,7 @@ func TestNewOAuthClient_DefaultScopes(t *testing.T) {
 		RedirectURI:  "http://localhost/callback",
 	}, zerolog.Nop())
 
-	assert.Len(t, client.cfg.Scopes, 7)
+	assert.Len(t, client.cfg.Scopes, 10)
 	assert.Contains(t, client.cfg.Scopes, "read:jira-work")
 	assert.Contains(t, client.cfg.Scopes, "write:jira-work")
 	assert.Contains(t, client.cfg.Scopes, "read:jira-user")
@@ -27,6 +27,9 @@ func TestNewOAuthClient_DefaultScopes(t *testing.T) {
 	assert.Contains(t, client.cfg.Scopes, "read:board-scope:jira-software")
 	assert.Contains(t, client.cfg.Scopes, "read:project:jira")
 	assert.Contains(t, client.cfg.Scopes, "offline_access")
+	assert.Contains(t, client.cfg.Scopes, "read:webhook:jira")
+	assert.Contains(t, client.cfg.Scopes, "write:webhook:jira")
+	assert.Contains(t, client.cfg.Scopes, "delete:webhook:jira")
 }
 
 func TestNewOAuthClient_CustomScopes(t *testing.T) {

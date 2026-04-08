@@ -11,6 +11,46 @@ import (
 	"SleepJiraBot/internal/locale"
 )
 
+// handleFieldSelectCallback handles a generic "field selected" callback used
+// by the assignee/story-points pickers. The picker callback data has the
+// shape "<prefix>:<fieldID>[:<fieldName>]"; this helper persists the choice
+// via setField and edits the original message with the saved confirmation.
+func (h *Handler) handleFieldSelectCallback(
+	ctx context.Context,
+	cq *tgbotapi.CallbackQuery,
+	parts []string,
+	setField func(context.Context, int64, string) error,
+	savedKey, errLog string,
+) {
+	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
+
+	chatID := cq.Message.Chat.ID
+	userID := cq.From.ID
+	lang := h.getLang(ctx, userID)
+
+	if len(parts) < 2 {
+		return
+	}
+
+	fieldID := parts[1]
+	fieldName := fieldID
+	if len(parts) >= 3 {
+		fieldName = strings.Join(parts[2:], ":")
+	}
+
+	if err := setField(ctx, userID, fieldID); err != nil {
+		h.log.Error().Err(err).Msg(errLog)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
+		return
+	}
+
+	text := locale.T(lang, savedKey, format.EscapeMarkdown(fieldName))
+	editMsg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
+		text, menuButtonKeyboard(lang))
+	editMsg.ParseMode = tgbotapi.ModeMarkdown
+	_, _ = h.api.Send(editMsg)
+}
+
 // handleAssigneeFieldStart fetches people-type fields from Jira and shows a picker.
 func (h *Handler) handleAssigneeFieldStart(ctx context.Context, chatID, userID int64) {
 	lang := h.getLang(ctx, userID)
@@ -73,33 +113,7 @@ func (h *Handler) handleAssigneeFieldStart(ctx context.Context, chatID, userID i
 
 // handleAssigneeFieldCallback handles af_select and af_reset callbacks.
 func (h *Handler) handleAssigneeFieldCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
-	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
-
-	chatID := cq.Message.Chat.ID
-	userID := cq.From.ID
-	lang := h.getLang(ctx, userID)
-
-	if len(parts) < 2 {
-		return
-	}
-
-	fieldID := parts[1]
-	fieldName := fieldID
-	if len(parts) >= 3 {
-		fieldName = strings.Join(parts[2:], ":")
-	}
-
-	if err := h.userRepo.SetAssigneeField(ctx, userID, fieldID); err != nil {
-		h.log.Error().Err(err).Msg("failed to save assignee field")
-		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
-		return
-	}
-
-	text := locale.T(lang, "assigneefield.saved", format.EscapeMarkdown(fieldName))
-	editMsg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
-		text, menuButtonKeyboard(lang))
-	editMsg.ParseMode = tgbotapi.ModeMarkdown
-	_, _ = h.api.Send(editMsg)
+	h.handleFieldSelectCallback(ctx, cq, parts, h.userRepo.SetAssigneeField, "assigneefield.saved", "failed to save assignee field")
 }
 
 // handleAssigneeFieldReset resets the assignee field to default.

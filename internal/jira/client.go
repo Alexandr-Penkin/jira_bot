@@ -24,13 +24,23 @@ const (
 	maxResponseSize = 10 << 20 // 10 MB
 )
 
-var httpClient = &http.Client{
-	Timeout: 30 * time.Second,
+// HTTPError is returned by doRequest/doAgileRequest for any non-2xx Jira
+// response. Callers that need to react to specific statuses (e.g. treat 404
+// as "already gone") should use errors.As rather than string-matching the
+// error message.
+type HTTPError struct {
+	Method string
+	Path   string
+	Status int
+	Body   string
 }
 
-type tokenLockEntry struct {
-	mu       *sync.Mutex
-	lastUsed time.Time
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("jira API %s %s: %d %s", e.Method, e.Path, e.Status, e.Body)
+}
+
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
 }
 
 type Client struct {
@@ -38,7 +48,7 @@ type Client struct {
 	userRepo   *storage.UserRepo
 	log        zerolog.Logger
 	locksMu    sync.Mutex
-	tokenLocks map[int64]*tokenLockEntry
+	tokenLocks map[int64]*sync.Mutex
 }
 
 func NewClient(oauth *OAuthClient, userRepo *storage.UserRepo, log zerolog.Logger) *Client {
@@ -46,49 +56,27 @@ func NewClient(oauth *OAuthClient, userRepo *storage.UserRepo, log zerolog.Logge
 		oauth:      oauth,
 		userRepo:   userRepo,
 		log:        log,
-		tokenLocks: make(map[int64]*tokenLockEntry),
+		tokenLocks: make(map[int64]*sync.Mutex),
 	}
 }
 
-// StartCleanup starts a background goroutine that removes stale token locks.
-func (c *Client) StartCleanup(ctx context.Context) {
-	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				c.cleanTokenLocks()
-			}
-		}
-	}()
-}
-
-func (c *Client) cleanTokenLocks() {
-	c.locksMu.Lock()
-	defer c.locksMu.Unlock()
-
-	now := time.Now()
-	for id, entry := range c.tokenLocks {
-		if now.Sub(entry.lastUsed) > 30*time.Minute {
-			delete(c.tokenLocks, id)
-		}
-	}
-}
+// StartCleanup is kept for API compatibility. Token locks are never evicted:
+// a previous TTL-based eviction policy raced with concurrent refreshes and
+// could hand out two different mutexes for the same user, allowing two
+// refreshes in parallel and silently invalidating one of the refresh tokens.
+// The map grows only with distinct connected users, which is bounded.
+func (c *Client) StartCleanup(_ context.Context) {}
 
 func (c *Client) getUserTokenLock(telegramUserID int64) *sync.Mutex {
 	c.locksMu.Lock()
 	defer c.locksMu.Unlock()
 
-	entry, ok := c.tokenLocks[telegramUserID]
+	mu, ok := c.tokenLocks[telegramUserID]
 	if !ok {
-		entry = &tokenLockEntry{mu: &sync.Mutex{}}
-		c.tokenLocks[telegramUserID] = entry
+		mu = &sync.Mutex{}
+		c.tokenLocks[telegramUserID] = mu
 	}
-	entry.lastUsed = time.Now()
-	return entry.mu
+	return mu
 }
 
 func (c *Client) GetMyself(ctx context.Context, user *storage.User) (*JiraUser, error) {
@@ -580,7 +568,7 @@ func (c *Client) doAgileRequest(ctx context.Context, user *storage.User, method,
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("jira agile API %s %s: %d %s", method, path, resp.StatusCode, string(body))
+		return nil, &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Body: string(body)}
 	}
 
 	return body, nil
@@ -682,7 +670,7 @@ func (c *Client) doRequest(ctx context.Context, user *storage.User, method, path
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("jira API %s %s: %d %s", method, path, resp.StatusCode, string(body))
+		return nil, &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Body: string(body)}
 	}
 
 	return body, nil

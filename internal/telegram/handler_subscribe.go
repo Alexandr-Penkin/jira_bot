@@ -147,6 +147,9 @@ func (h *Handler) handleFilterCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "sub.failed")))
 		return
 	}
+	if h.webhookMgr != nil {
+		h.webhookMgr.RegisterForSubscription(ctx, sub)
+	}
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "sub.created_filter", filterName))
 	msg.ParseMode = tgbotapi.ModeMarkdown
@@ -176,6 +179,9 @@ func (h *Handler) createSimpleSubscription(ctx context.Context, chatID, userID i
 		h.log.Error().Err(err).Msg("failed to create subscription")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "sub.failed")))
 		return
+	}
+	if h.webhookMgr != nil {
+		h.webhookMgr.RegisterForSubscription(ctx, sub)
 	}
 
 	label := subTypeLabel(lang, subType)
@@ -231,6 +237,9 @@ func (h *Handler) createKeyedSubscription(ctx context.Context, chatID, userID in
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "sub.failed")))
 		return
 	}
+	if h.webhookMgr != nil {
+		h.webhookMgr.RegisterForSubscription(ctx, sub)
+	}
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, successKey, successArg))
 	msg.ParseMode = tgbotapi.ModeMarkdown
@@ -275,6 +284,17 @@ func (h *Handler) handleFilterSubscription(ctx context.Context, chatID, userID i
 }
 
 func (h *Handler) handleUnwatch(ctx context.Context, chatID int64, lang locale.Lang) tgbotapi.MessageConfig {
+	// Fetch subs first so we can drop the corresponding Jira webhooks
+	// before removing the local rows. Failing to fetch is non-fatal —
+	// we still attempt the delete.
+	if h.webhookMgr != nil {
+		if subs, err := h.subRepo.GetByChat(ctx, chatID); err == nil {
+			for i := range subs {
+				h.webhookMgr.DeleteForSubscription(ctx, subs[i].TelegramUserID, subs[i].ID)
+			}
+		}
+	}
+
 	if err := h.subRepo.DeleteByChat(ctx, chatID); err != nil {
 		h.log.Error().Err(err).Msg("failed to delete subscriptions")
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "unwatch.failed"))
@@ -331,4 +351,3 @@ func subDetail(sub *storage.Subscription) string {
 		return ""
 	}
 }
-

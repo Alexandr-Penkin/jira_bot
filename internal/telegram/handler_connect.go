@@ -53,6 +53,12 @@ func (h *Handler) handleDisconnect(ctx context.Context, chatID, userID int64) tg
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "disconnect.not_linked"))
 	}
 
+	// Delete Jira-side webhooks BEFORE wiping the user record, since
+	// the manager needs the access token to call the Jira API.
+	if h.webhookMgr != nil {
+		h.webhookMgr.DeleteAllForUser(ctx, userID)
+	}
+
 	if err = h.subRepo.DeleteByUserID(ctx, userID); err != nil {
 		h.log.Error().Err(err).Int64("user_id", userID).Msg("failed to delete user subscriptions")
 	}

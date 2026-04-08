@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -117,12 +116,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if len(body) == maxWebhookBodySize {
+		h.log.Warn().Int("size", len(body)).Msg("webhook body hit size limit, payload may be truncated")
+	}
 
-	signature := r.Header.Get("X-Hub-Signature")
-	if !h.verifySignature(body, signature) {
-		h.log.Warn().Msg("webhook signature verification failed")
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
+	// Signature verification is opt-in: Jira Cloud's dynamic-webhook
+	// registration API does not expose a signing-secret field, so
+	// payloads arrive unsigned unless the operator has wired a secret in
+	// out-of-band (e.g. Connect app). When the secret is empty we trust
+	// the URL, which must be protected by other means.
+	if h.webhookSecret != "" {
+		if !h.verifySignature(body, r.Header.Get("X-Hub-Signature")) {
+			h.log.Warn().Msg("webhook signature verification failed")
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	var event Event
@@ -239,13 +247,23 @@ func (h *Handler) processEvent(event Event) {
 			continue
 		}
 
-		if issueKey != "" && !h.dedup.Allow(matched[i].TelegramChatID, issueKey) {
-			h.log.Debug().
-				Int64("chat_id", matched[i].TelegramChatID).
-				Str("issue", issueKey).
-				Msg("webhook: skipping duplicate notification")
-			sent[matched[i].TelegramChatID] = true
-			continue
+		// Dedup key discriminates by event type and (for comments) the
+		// comment id, so an issue_updated and a comment_created on the
+		// same issue within the guard window don't collapse into one.
+		if issueKey != "" {
+			dedupKey := issueKey + "|" + eventType
+			if event.Comment != nil && event.Comment.ID != "" {
+				dedupKey += "|" + event.Comment.ID
+			}
+			if !h.dedup.Allow(matched[i].TelegramChatID, dedupKey) {
+				h.log.Debug().
+					Int64("chat_id", matched[i].TelegramChatID).
+					Str("issue", issueKey).
+					Str("event", eventType).
+					Msg("webhook: skipping duplicate notification")
+				sent[matched[i].TelegramChatID] = true
+				continue
+			}
 		}
 
 		sent[matched[i].TelegramChatID] = true
@@ -268,28 +286,32 @@ func (h *Handler) processEvent(event Event) {
 	}
 }
 
-// mentionPattern matches Jira Cloud mention format: [~accountid:XXXXXXXXX]
-var mentionPattern = regexp.MustCompile(`\[~accountid:([a-zA-Z0-9:_-]+)\]`)
-
 // findMentionSubscriptions parses comment body for mentions and returns
-// matching my_mentions subscriptions.
+// matching my_mentions subscriptions. The comment body is Atlassian
+// Document Format (ADF) — mention nodes carry the target's account id in
+// attrs.id, so we walk the tree rather than trying to regex the JSON.
 func (h *Handler) findMentionSubscriptions(ctx context.Context, event Event) []storage.Subscription {
-	if event.Comment == nil || event.Comment.Body == "" {
+	if event.Comment == nil || event.Comment.Body == nil {
 		return nil
 	}
 
-	matches := mentionPattern.FindAllStringSubmatch(event.Comment.Body, -1)
-	if len(matches) == 0 {
+	mentionIDs := event.Comment.Body.ExtractMentionIDs()
+	if len(mentionIDs) == 0 {
 		return nil
 	}
 
-	accountIDs := make([]string, 0, len(matches))
-	for _, m := range matches {
+	accountIDs := make([]string, 0, len(mentionIDs))
+	seen := make(map[string]bool, len(mentionIDs))
+	for _, id := range mentionIDs {
 		// Skip the comment author — they don't need a notification about their own comment.
-		if event.Comment.Author != nil && m[1] == event.Comment.Author.AccountID {
+		if event.Comment.Author != nil && id == event.Comment.Author.AccountID {
 			continue
 		}
-		accountIDs = append(accountIDs, m[1])
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		accountIDs = append(accountIDs, id)
 	}
 
 	if len(accountIDs) == 0 {
@@ -307,8 +329,8 @@ func (h *Handler) findMentionSubscriptions(ctx context.Context, event Event) []s
 	}
 
 	userIDs := make([]int64, 0, len(users))
-	for _, u := range users {
-		userIDs = append(userIDs, u.TelegramUserID)
+	for i := range users {
+		userIDs = append(userIDs, users[i].TelegramUserID)
 	}
 
 	// Find active my_mentions subscriptions for these users.

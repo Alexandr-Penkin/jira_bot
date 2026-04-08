@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/rs/zerolog"
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
@@ -68,6 +69,7 @@ func main() {
 	userRepo := storage.NewUserRepo(mongo.Database(), enc)
 	subRepo := storage.NewSubscriptionRepo(mongo.Database())
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
+	webhookRepo := storage.NewWebhookRepo(mongo.Database())
 
 	oauthCfg := jira.OAuthConfig{
 		ClientID:     cfg.JiraClientID,
@@ -78,8 +80,9 @@ func main() {
 	oauthClient.StartCleanup(ctx)
 	jiraClient := jira.NewClient(oauthClient, userRepo, log)
 	jiraClient.StartCleanup(ctx)
+	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
 
-	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, log, cfg.AdminTelegramID)
+	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create telegram bot")
 		cancel()
@@ -111,7 +114,7 @@ func main() {
 
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
 
-	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, bot.API(), log)
+	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, subRepo, webhookMgr, bot.API(), log)
 	callbackServer.Handle("/webhook", webhookHandler)
 	callbackServer.HandleFunc("/logo.jpeg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
@@ -173,6 +176,15 @@ func main() {
 		}
 	}()
 
+	// Webhook refresher: extends Jira-side webhook lifetime before the
+	// 30-day expiry. Runs once at startup so a long-restarted instance
+	// catches up immediately, then daily.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runWebhookRefresher(ctx, webhookMgr, log)
+	}()
+
 	sig := <-sigCh
 	log.Info().Str("signal", sig.String()).Msg("received shutdown signal")
 	cancel()
@@ -185,4 +197,38 @@ func main() {
 
 	wg.Wait()
 	log.Info().Msg("SleepJiraBot stopped")
+}
+
+const (
+	webhookRefreshInterval = 24 * time.Hour
+	// webhookRefreshLeadTime is how far before expiry we extend a
+	// webhook. 7 days gives us a generous safety margin so a missed
+	// daily run does not let webhooks lapse.
+	webhookRefreshLeadTime = 7 * 24 * time.Hour
+)
+
+func runWebhookRefresher(ctx context.Context, mgr *jira.WebhookManager, log zerolog.Logger) {
+	if mgr == nil {
+		return
+	}
+	log.Info().
+		Dur("interval", webhookRefreshInterval).
+		Dur("lead_time", webhookRefreshLeadTime).
+		Msg("webhook refresher started")
+
+	// Initial run on startup so restarts after long downtime catch up.
+	mgr.RefreshExpiring(ctx, time.Now().Add(webhookRefreshLeadTime))
+
+	ticker := time.NewTicker(webhookRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Msg("webhook refresher stopped")
+			return
+		case <-ticker.C:
+			mgr.RefreshExpiring(ctx, time.Now().Add(webhookRefreshLeadTime))
+		}
+	}
 }

@@ -108,7 +108,7 @@ func (h *Handler) handleFiltersCallback(ctx context.Context, cq *tgbotapi.Callba
 			status = issue.Fields.Status.Name
 		}
 		issueURL := fmt.Sprintf("%s/browse/%s", user.JiraSiteURL, issue.Key)
-		sb.WriteString(fmt.Sprintf("[%s](%s) \\[%s] %s\n", issue.Key, issueURL, format.EscapeMarkdown(status), format.EscapeMarkdown(issue.Fields.Summary)))
+		fmt.Fprintf(&sb, "[%s](%s) \\[%s] %s\n", issue.Key, issueURL, format.EscapeMarkdown(status), format.EscapeMarkdown(issue.Fields.Summary))
 	}
 
 	if result.Total > count {
