@@ -272,7 +272,12 @@ func (h *Handler) handleAdminDisconnect(ctx context.Context, cq *tgbotapi.Callba
 		return
 	}
 
-	if err := h.userRepo.UpdateTokens(ctx, targetID, "", "", time.Time{}); err != nil {
+	// Admin-initiated disconnect: also clear the Jira-side webhooks so
+	// Jira stops pushing events for a user whose tokens we just wiped.
+	if h.webhookMgr != nil {
+		h.webhookMgr.DeleteAllForUser(ctx, targetID)
+	}
+	if err := h.userRepo.ClearJiraCredentials(ctx, targetID); err != nil {
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return
 	}

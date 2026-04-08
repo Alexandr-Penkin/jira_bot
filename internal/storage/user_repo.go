@@ -229,6 +229,31 @@ func (r *UserRepo) DeleteByTelegramID(ctx context.Context, telegramUserID int64)
 	return err
 }
 
+// ClearJiraCredentials removes the Jira-side identity (cloud id, account
+// id, site URL, OAuth tokens) but keeps the user's preferences — language,
+// default project/board, sprint issue types, assignee/story points field
+// ids, daily JQLs. This is the method used on user-initiated /disconnect
+// so that a subsequent /connect does not force the user to rebuild their
+// setup from scratch.
+func (r *UserRepo) ClearJiraCredentials(ctx context.Context, telegramUserID int64) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"modified_ts": time.Now().Unix(),
+		},
+		"$unset": bson.M{
+			"jira_cloud_id":    "",
+			"jira_account_id":  "",
+			"jira_site_url":    "",
+			"access_token":     "",
+			"refresh_token":    "",
+			"token_expires_at": "",
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
 // CountAll returns the total number of users.
 func (r *UserRepo) CountAll(ctx context.Context) (int64, error) {
 	return r.coll.CountDocuments(ctx, bson.M{})

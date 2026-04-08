@@ -71,8 +71,12 @@ func (h *Handler) handleDisconnect(ctx context.Context, chatID, userID int64) tg
 		h.onScheduleChange()
 	}
 
-	if err = h.userRepo.DeleteByTelegramID(ctx, userID); err != nil {
-		h.log.Error().Err(err).Msg("failed to delete user")
+	// Clear only the Jira-side credentials — keep language, default
+	// project/board, sprint issue types, assignee/story points field
+	// ids, and daily JQLs so reconnecting does not force the user to
+	// reconfigure everything.
+	if err = h.userRepo.ClearJiraCredentials(ctx, userID); err != nil {
+		h.log.Error().Err(err).Msg("failed to clear jira credentials")
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "disconnect.failed"))
 	}
 
