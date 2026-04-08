@@ -186,12 +186,13 @@ func formatDaily(lang locale.Lang, siteURL, displayName string, done, doing, pla
 	var sb strings.Builder
 
 	if displayName != "" {
-		fmt.Fprintf(&sb, "#daily (%s)\n\n", format.EscapeMarkdown(displayName))
+		fmt.Fprintf(&sb, "#daily (%s)\n", format.EscapeMarkdown(displayName))
 	} else {
-		sb.WriteString("#daily\n\n")
+		sb.WriteString("#daily\n")
 	}
 
 	// Done
+	sb.WriteString(":\n")
 	sb.WriteString(locale.T(lang, "daily.done"))
 	sb.WriteString(":\n")
 	if done == nil || len(done.Issues) == 0 {
@@ -203,7 +204,8 @@ func formatDaily(lang locale.Lang, siteURL, displayName string, done, doing, pla
 		}
 	}
 
-	// Doing
+	// Doing\
+	sb.WriteString(":\n")
 	sb.WriteString(locale.T(lang, "daily.doing"))
 	sb.WriteString(":\n")
 	if doing == nil || len(doing.Issues) == 0 {
@@ -216,6 +218,7 @@ func formatDaily(lang locale.Lang, siteURL, displayName string, done, doing, pla
 	}
 
 	// Plan
+	sb.WriteString(":\n")
 	sb.WriteString(locale.T(lang, "daily.plan"))
 	sb.WriteString(":\n")
 	if plan != nil && len(plan.Issues) > 0 {
