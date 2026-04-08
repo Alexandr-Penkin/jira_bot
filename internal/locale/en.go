@@ -381,4 +381,8 @@ var en = map[string]string{
 		"Pending notifications: %d\n" +
 		"Last poll: %s",
 	"admin.poller_never": "never",
+
+	"btn.admin_notiflog":   "🧾 Last notifications",
+	"admin.notiflog_title": "*🧾 Last sent notifications*",
+	"admin.notiflog_empty": "No notifications sent yet.",
 }

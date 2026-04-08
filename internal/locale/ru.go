@@ -381,4 +381,8 @@ var ru = map[string]string{
 		"Ожидающих уведомлений: %d\n" +
 		"Последний опрос: %s",
 	"admin.poller_never": "никогда",
+
+	"btn.admin_notiflog":   "🧾 Последние уведомления",
+	"admin.notiflog_title": "*🧾 Последние отправленные уведомления*",
+	"admin.notiflog_empty": "Пока нет отправленных уведомлений.",
 }

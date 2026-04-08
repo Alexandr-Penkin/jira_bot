@@ -18,6 +18,7 @@ import (
 	"SleepJiraBot/internal/crypto"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
+	"SleepJiraBot/internal/notiflog"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/scheduler"
@@ -82,7 +83,9 @@ func main() {
 	jiraClient.StartCleanup(ctx)
 	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
 
-	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID)
+	notifLog := notiflog.New(10)
+
+	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID, notifLog)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create telegram bot")
 		cancel()
@@ -109,10 +112,10 @@ func main() {
 	}
 	dedup := notifydedup.New(3 * batchWindow)
 
-	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, batchWindow, dedup)
+	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, batchWindow, dedup, notifLog)
 	bot.SetPollerRef(issuePoller)
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
+	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup, notifLog)
 
 	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, subRepo, webhookMgr, bot.API(), log)
 	callbackServer.Handle("/webhook", webhookHandler)
