@@ -83,10 +83,10 @@ type ADFDocument struct {
 }
 
 type ADFNode struct {
-	Type    string            `json:"type"`
-	Text    string            `json:"text,omitempty"`
-	Attrs   map[string]string `json:"attrs,omitempty"`
-	Content []ADFNode         `json:"content,omitempty"`
+	Type    string         `json:"type"`
+	Text    string         `json:"text,omitempty"`
+	Attrs   map[string]any `json:"attrs,omitempty"`
+	Content []ADFNode      `json:"content,omitempty"`
 }
 
 type SearchResult struct {
@@ -180,7 +180,7 @@ func (d *ADFDocument) ExtractMentionIDs() []string {
 
 func extractNodeMentions(node ADFNode) []string {
 	if node.Type == "mention" {
-		if id := node.Attrs["id"]; id != "" {
+		if id, ok := node.Attrs["id"].(string); ok && id != "" {
 			return []string{id}
 		}
 	}
