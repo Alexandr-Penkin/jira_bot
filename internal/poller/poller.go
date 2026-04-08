@@ -171,6 +171,12 @@ func (p *Poller) poll(ctx context.Context) {
 		return
 	}
 
+	// Info-level heartbeat so docker logs show the poller is alive even
+	// during quiet cycles when no changes are detected.
+	p.log.Info().
+		Int("users", len(userIDs)).
+		Msg("poller: cycle start")
+
 	// Cap each user's work at the poll interval so a single slow Jira
 	// site can't starve the rest of the users for many minutes.
 	userBudget := p.interval
@@ -228,6 +234,18 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				Int64("user_id", telegramUserID).
 				Msg("poller: failed to search issues")
 			continue
+		}
+
+		// Per-subscription Info log so the operator can tell whether
+		// Jira returned anything for each query, separating "fetch
+		// returned 0" from "fetched N but all filtered out later".
+		if len(result.Issues) > 0 {
+			p.log.Info().
+				Int64("user_id", telegramUserID).
+				Str("sub_type", sub.SubscriptionType).
+				Int("issues", len(result.Issues)).
+				Str("since", sinceStr).
+				Msg("poller: jira returned issues")
 		}
 
 		sinceTime := time.Unix(sinceTS, 0)
