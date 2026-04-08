@@ -143,9 +143,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Debug().
-		Str("event", event.WebhookEvent).
-		Msg("received webhook event")
+	// Info-level so the incoming-event trail shows up in docker logs by
+	// default. Includes the fields an operator needs to correlate a
+	// notification with what Jira actually sent: event, issue key, project
+	// key, and the account that triggered the event.
+	recvLog := h.log.Info().
+		Str("source", "webhook").
+		Str("event", event.WebhookEvent)
+	if event.Issue != nil {
+		recvLog = recvLog.Str("issue", event.Issue.Key)
+		if event.Issue.Fields.Project != nil {
+			recvLog = recvLog.Str("project", event.Issue.Fields.Project.Key)
+		}
+	}
+	if event.User != nil {
+		recvLog = recvLog.Str("by", event.User.DisplayName)
+	}
+	if event.Comment != nil {
+		recvLog = recvLog.Str("comment_id", event.Comment.ID)
+	}
+	recvLog.Msg("received webhook event")
 
 	select {
 	case h.eventQueue <- event:

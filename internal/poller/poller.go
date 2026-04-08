@@ -361,6 +361,25 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 		return
 	}
 
+	// Info-level log so the received-activity trail shows up in docker
+	// logs. Fields let an operator correlate a later "sent"/"dedup-dropped"
+	// event back to the exact Jira change that produced it.
+	fieldNames := make([]string, 0, len(changes))
+	for i := range changes {
+		fn := changeFieldName(changes[i].Field, changes[i].FieldID)
+		if fn != "" {
+			fieldNames = append(fieldNames, fn)
+		}
+	}
+	p.log.Info().
+		Str("source", "poller").
+		Int64("chat_id", chatID).
+		Str("issue", issue.Key).
+		Int("change_count", len(changes)).
+		Strs("fields", fieldNames).
+		Bool("mention", isMention).
+		Msg("received issue activity")
+
 	pn, exists := p.pending[key]
 	if !exists {
 		pn = &pendingNotification{
