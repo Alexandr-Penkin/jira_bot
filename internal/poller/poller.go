@@ -265,14 +265,6 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			}
 			notified[sub.TelegramChatID][issue.Key] = true
 
-			if !p.dedup.Allow(sub.TelegramChatID, issue.Key) {
-				p.log.Debug().
-					Int64("chat_id", sub.TelegramChatID).
-					Str("issue", issue.Key).
-					Msg("poller: skipping duplicate notification")
-				continue
-			}
-
 			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
 		}
 
@@ -475,6 +467,18 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 			Int64("chat_id", pn.chatID).
 			Str("issue", pn.issueKey).
 			Msg("poller: skipping notification with no changes")
+		return
+	}
+
+	// Consume the dedup slot only now that we are committed to sending.
+	// Doing this earlier (at poll time) would block follow-up polls for
+	// ~ttl even when the notification gets filtered out as empty, which
+	// silently dropped real updates for minutes at a time.
+	if !p.dedup.Allow(pn.chatID, pn.issueKey) {
+		p.log.Debug().
+			Int64("chat_id", pn.chatID).
+			Str("issue", pn.issueKey).
+			Msg("poller: skipping duplicate notification")
 		return
 	}
 
