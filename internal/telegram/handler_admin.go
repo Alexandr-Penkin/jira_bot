@@ -112,7 +112,15 @@ func (h *Handler) handleAdminStats(ctx context.Context, chatID int64, lang local
 	activeSubs, _ := h.subRepo.CountActive(ctx)
 	activeSchedules, _ := h.scheduleRepo.CountActive(ctx)
 
-	text := locale.T(lang, "admin.stats", totalUsers, connectedUsers, activeSubs, activeSchedules)
+	stats := h.notifLog.Snapshot()
+	since := stats.StartedAt.Format("2006-01-02 15:04:05")
+
+	text := locale.T(lang, "admin.stats",
+		totalUsers, connectedUsers, activeSubs, activeSchedules,
+		since,
+		stats.ReceivedPoller, stats.ReceivedWebhook,
+		stats.SentPoller, stats.SentWebhook,
+		stats.Merged)
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.ReplyMarkup = adminMenuKeyboard(lang)

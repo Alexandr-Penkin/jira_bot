@@ -354,7 +354,13 @@ var en = map[string]string{
 		"Users total: %d\n" +
 		"Users connected: %d\n" +
 		"Active subscriptions: %d\n" +
-		"Active schedules: %d",
+		"Active schedules: %d\n\n" +
+		"*Notifications since %s:*\n" +
+		"Received \\(poller\\): %d\n" +
+		"Received \\(webhook\\): %d\n" +
+		"Sent \\(poller\\): %d\n" +
+		"Sent \\(webhook\\): %d\n" +
+		"Merged \\(batched\\): %d",
 
 	"admin.users_title":       "*👥 Connected Users* (page %d):\n\n",
 	"admin.users_empty":       "No users found.",

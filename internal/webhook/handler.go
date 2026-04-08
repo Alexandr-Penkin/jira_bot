@@ -143,6 +143,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.notifLog.RecordReceived(notiflog.SourceWebhook)
+
 	// Info-level so the incoming-event trail shows up in docker logs by
 	// default. Includes the fields an operator needs to correlate a
 	// notification with what Jira actually sent: event, issue key, project

@@ -248,6 +248,15 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				Msg("poller: jira returned issues")
 		}
 
+		// Per-stage drop counters so the operator can see where issues
+		// disappear between Jira's response and the outbound notification.
+		var (
+			droppedStale    int
+			droppedNoMent   int
+			droppedDupChat  int
+			passedToPending int
+		)
+
 		sinceTime := time.Unix(sinceTS, 0)
 		for j := range result.Issues {
 			issue := &result.Issues[j]
@@ -258,6 +267,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			if issue.Fields.Updated != "" {
 				updatedAt, parseErr := time.Parse("2006-01-02T15:04:05.000-0700", issue.Fields.Updated)
 				if parseErr == nil && !updatedAt.After(sinceTime) {
+					droppedStale++
 					continue
 				}
 			}
@@ -265,6 +275,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			// For mention subscriptions, only notify if user is actually mentioned in recent comments.
 			if sub.SubscriptionType == storage.SubTypeMyMentions {
 				if !p.isUserMentionedInComments(ctx, user, issue.Key, sinceTS) {
+					droppedNoMent++
 					continue
 				}
 			}
@@ -275,6 +286,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
 			if _, inPending := p.pending[pendingKey]; inPending {
 				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
+				passedToPending++
 				continue
 			}
 
@@ -282,11 +294,25 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				notified[sub.TelegramChatID] = make(map[string]bool)
 			}
 			if notified[sub.TelegramChatID][issue.Key] {
+				droppedDupChat++
 				continue
 			}
 			notified[sub.TelegramChatID][issue.Key] = true
 
 			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
+			passedToPending++
+		}
+
+		if len(result.Issues) > 0 {
+			p.log.Info().
+				Int64("user_id", telegramUserID).
+				Str("sub_type", sub.SubscriptionType).
+				Int("fetched", len(result.Issues)).
+				Int("dropped_stale", droppedStale).
+				Int("dropped_no_mention", droppedNoMent).
+				Int("dropped_dup_chat", droppedDupChat).
+				Int("passed_to_addPending", passedToPending).
+				Msg("poller: filter summary")
 		}
 
 		if err := p.subRepo.UpdateLastPolled(ctx, sub.ID, now); err != nil {
@@ -371,13 +397,23 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 	// allowed through even when changelog is empty in this window —
 	// the trigger for them is the comment mention itself.
 	if len(changes) == 0 && !isMention {
+		p.log.Info().
+			Int64("chat_id", chatID).
+			Str("issue", issue.Key).
+			Msg("poller: dropped in addPending — no changes in window")
 		return
 	}
 	// Non-mention notification with no recent changes by anyone other than
 	// the current user — also skip (would produce an empty notification).
 	if len(authors) == 0 && len(changes) == 0 {
+		p.log.Info().
+			Int64("chat_id", chatID).
+			Str("issue", issue.Key).
+			Msg("poller: dropped in addPending — no external authors")
 		return
 	}
+
+	p.notifLog.RecordReceived(notiflog.SourcePoller)
 
 	// Info-level log so the received-activity trail shows up in docker
 	// logs. Fields let an operator correlate a later "sent"/"dedup-dropped"
