@@ -254,11 +254,25 @@ func (c *Client) GetFields(ctx context.Context, user *storage.User) ([]JiraField
 }
 
 // GetIssueComments returns comments for an issue, ordered by creation date descending.
-// If since is non-empty, only comments created after this date are returned (format: "2006-01-02 15:04").
 func (c *Client) GetIssueComments(ctx context.Context, user *storage.User, issueKey string, maxResults int) ([]Comment, error) {
+	resp, err := c.GetIssueCommentsPage(ctx, user, issueKey, 0, maxResults, "-created")
+	if err != nil {
+		return nil, err
+	}
+	return resp.Comments, nil
+}
+
+// GetIssueCommentsPage returns a single page of comments with the raw
+// pagination envelope, so callers can iterate until startAt+len >= total.
+// orderBy accepts values like "-created" (newest first) or "created" (oldest
+// first); pass "" to let Jira use its default ordering.
+func (c *Client) GetIssueCommentsPage(ctx context.Context, user *storage.User, issueKey string, startAt, maxResults int, orderBy string) (*CommentsResponse, error) {
 	params := url.Values{
+		"startAt":    {fmt.Sprintf("%d", startAt)},
 		"maxResults": {fmt.Sprintf("%d", maxResults)},
-		"orderBy":    {"-created"},
+	}
+	if orderBy != "" {
+		params.Set("orderBy", orderBy)
 	}
 	path := fmt.Sprintf("/issue/%s/comment?%s", url.PathEscape(issueKey), params.Encode())
 	body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
@@ -271,7 +285,7 @@ func (c *Client) GetIssueComments(ctx context.Context, user *storage.User, issue
 		return nil, fmt.Errorf("decode comments: %w", err)
 	}
 
-	return resp.Comments, nil
+	return &resp, nil
 }
 
 func (c *Client) AddComment(ctx context.Context, user *storage.User, issueKey, text string) error {

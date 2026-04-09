@@ -18,6 +18,7 @@ type User struct {
 	TelegramUserID     int64         `bson:"telegram_user_id"`
 	JiraCloudID        string        `bson:"jira_cloud_id,omitempty"`
 	JiraAccountID      string        `bson:"jira_account_id,omitempty"`
+	JiraDisplayName    string        `bson:"jira_display_name,omitempty"`
 	JiraSiteURL        string        `bson:"jira_site_url,omitempty"`
 	AccessToken        string        `bson:"access_token,omitempty"`
 	RefreshToken       string        `bson:"refresh_token,omitempty"`
@@ -76,13 +77,14 @@ func (r *UserRepo) Upsert(ctx context.Context, user *User) error {
 	filter := bson.M{"telegram_user_id": user.TelegramUserID}
 	update := bson.M{
 		"$set": bson.M{
-			"jira_cloud_id":    user.JiraCloudID,
-			"jira_account_id":  user.JiraAccountID,
-			"jira_site_url":    user.JiraSiteURL,
-			"access_token":     encAccess,
-			"refresh_token":    encRefresh,
-			"token_expires_at": user.TokenExpiresAt,
-			"modified_ts":      now,
+			"jira_cloud_id":     user.JiraCloudID,
+			"jira_account_id":   user.JiraAccountID,
+			"jira_display_name": user.JiraDisplayName,
+			"jira_site_url":     user.JiraSiteURL,
+			"access_token":      encAccess,
+			"refresh_token":     encRefresh,
+			"token_expires_at":  user.TokenExpiresAt,
+			"modified_ts":       now,
 		},
 		"$setOnInsert": bson.M{
 			"created_ts": now,
@@ -114,6 +116,22 @@ func (r *UserRepo) UpdateTokens(ctx context.Context, telegramUserID int64, acces
 		},
 	}
 	_, err = r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+// SetJiraIdentity records the Jira account id and display name for a user.
+// Used both during OAuth connect and as a backfill path when older user
+// records do not yet have a display name stored.
+func (r *UserRepo) SetJiraIdentity(ctx context.Context, telegramUserID int64, accountID, displayName string) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"jira_account_id":   accountID,
+			"jira_display_name": displayName,
+			"modified_ts":       time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
 	return err
 }
 

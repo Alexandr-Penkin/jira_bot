@@ -347,7 +347,23 @@ func (h *Handler) processEvent(event Event) {
 // Document Format (ADF) — mention nodes carry the target's account id in
 // attrs.id, so we walk the tree rather than trying to regex the JSON.
 func (h *Handler) findMentionSubscriptions(ctx context.Context, event Event) []storage.Subscription {
-	if event.Comment == nil || event.Comment.Body == nil {
+	if event.Comment == nil {
+		return nil
+	}
+	if event.Comment.Body == nil {
+		// Jira Cloud v3 webhooks normally deliver comment bodies as ADF.
+		// An empty body means we cannot see mentions — log loudly so an
+		// operator can investigate (custom app registration, truncated
+		// payload, future API change) instead of silently losing the
+		// notification.
+		issueKey := ""
+		if event.Issue != nil {
+			issueKey = event.Issue.Key
+		}
+		h.log.Warn().
+			Str("issue", issueKey).
+			Str("comment_id", event.Comment.ID).
+			Msg("webhook: comment event has nil body, mention detection skipped")
 		return nil
 	}
 

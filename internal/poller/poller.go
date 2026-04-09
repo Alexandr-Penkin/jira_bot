@@ -23,7 +23,8 @@ const (
 	defaultBatchWindow    = 1 * time.Minute
 	pollTimeout           = 30 * time.Second
 	pollMaxResults        = 50
-	mentionCommentMax     = 10
+	mentionCommentPage    = 50
+	mentionCommentMaxPage = 5 // hard cap: 5 * 50 = 250 comments scanned per issue per poll
 	mentionCommentTimeout = 10 * time.Second
 )
 
@@ -210,9 +211,16 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 	// Track notified issues per chat to avoid duplicates.
 	notified := make(map[int64]map[string]bool)
 
+	// Backfill the Jira display name for users who connected before the
+	// my_mentions `text ~` widening shipped. Cheap no-op for records that
+	// already have it — guarded so we don't re-hit /myself on every poll.
+	if user.JiraDisplayName == "" && user.JiraAccountID != "" {
+		p.backfillDisplayName(ctx, user)
+	}
+
 	for i := range subs {
 		sub := &subs[i]
-		jql := p.buildJQL(sub)
+		jql := p.buildJQL(sub, user)
 		if jql == "" {
 			continue
 		}
@@ -321,20 +329,29 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 	}
 }
 
-func (p *Poller) buildJQL(sub *storage.Subscription) string {
+func (p *Poller) buildJQL(sub *storage.Subscription, user *storage.User) string {
 	switch sub.SubscriptionType {
 	case storage.SubTypeMyNewIssues:
 		return "assignee = currentUser()"
 	case storage.SubTypeMyMentions:
-		// Jira has no direct "mentioned me" JQL clause, so we widen the
-		// pre-filter to any issue the user is involved with in a way
-		// that makes a mention plausible: watching, assigned, reported,
-		// or having voted/logged work. The actual mention check happens
-		// later in isUserMentionedInComments by scanning recent comment
-		// ADFs. Pure cold-mention (someone @-mentions a user with no
-		// prior involvement on the issue) still requires the webhook
-		// path — Jira Cloud has no JQL clause for "I was mentioned".
-		return "(watcher = currentUser() OR assignee = currentUser() OR reporter = currentUser() OR voter = currentUser() OR worklogAuthor = currentUser())"
+		// Jira has no direct "mentioned me" JQL clause. We pre-filter
+		// with two OR'd strategies:
+		//   1. Any issue the user is already related to (watcher,
+		//      assignee, reporter, voter, worklog author) — catches
+		//      "warm" mentions cheaply via user-relation clauses.
+		//   2. Full-text search for the user's display name — catches
+		//      cold mentions in unrelated issues. Jira's text index
+		//      covers comment bodies, and mention nodes are indexed
+		//      as "@Display Name", so `text ~ "\"<name>\""` returns
+		//      them. False positives (someone typed the name without
+		//      actually @-mentioning) are filtered downstream by
+		//      isUserMentionedInComments, which verifies the mention
+		//      via account ID in the ADF tree.
+		relation := "watcher = currentUser() OR assignee = currentUser() OR reporter = currentUser() OR voter = currentUser() OR worklogAuthor = currentUser()"
+		if user != nil && user.JiraDisplayName != "" {
+			return fmt.Sprintf("(%s OR text ~ %q)", relation, `"`+user.JiraDisplayName+`"`)
+		}
+		return "(" + relation + ")"
 	case storage.SubTypeMyWatched:
 		return "watcher = currentUser()"
 	case storage.SubTypeProjectUpdates:
@@ -639,6 +656,45 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	})
 }
 
+// backfillDisplayName fetches the user's Jira display name via /myself and
+// persists it. Used on poll start for users who connected before the
+// display name was stored — mutates the in-memory `user` so the current
+// poll cycle benefits from the wider JQL immediately.
+func (p *Poller) backfillDisplayName(ctx context.Context, user *storage.User) {
+	fetchCtx, cancel := context.WithTimeout(ctx, mentionCommentTimeout)
+	defer cancel()
+
+	myself, err := p.jiraAPI.GetMyself(fetchCtx, user)
+	if err != nil || myself == nil || myself.DisplayName == "" {
+		if err != nil {
+			p.log.Debug().Err(err).Int64("user_id", user.TelegramUserID).Msg("poller: failed to backfill display name")
+		}
+		return
+	}
+	if err := p.userRepo.SetJiraIdentity(ctx, user.TelegramUserID, user.JiraAccountID, myself.DisplayName); err != nil {
+		p.log.Warn().Err(err).Int64("user_id", user.TelegramUserID).Msg("poller: failed to persist backfilled display name")
+		return
+	}
+	user.JiraDisplayName = myself.DisplayName
+}
+
+// commentActivityTime returns the most recent activity timestamp of a
+// comment — max(created, updated) — so edits that introduce a mention are
+// treated as fresh events even when the original comment is old.
+func commentActivityTime(comment *jira.Comment) time.Time {
+	const layout = "2006-01-02T15:04:05.000-0700"
+	var newest time.Time
+	if t, err := time.Parse(layout, comment.Created); err == nil {
+		newest = t
+	}
+	if comment.Updated != "" {
+		if t, err := time.Parse(layout, comment.Updated); err == nil && t.After(newest) {
+			newest = t
+		}
+	}
+	return newest
+}
+
 // isUserMentionedInComments checks if the user's Jira account ID appears
 // in recent comments of the given issue.
 func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.User, issueKey string, sinceTS int64) bool {
@@ -649,30 +705,49 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 	commentCtx, cancel := context.WithTimeout(ctx, mentionCommentTimeout)
 	defer cancel()
 
-	comments, err := p.jiraAPI.GetIssueComments(commentCtx, user, issueKey, mentionCommentMax)
-	if err != nil {
-		p.log.Debug().Err(err).Str("issue", issueKey).Msg("poller: failed to get comments for mention check")
-		return false
-	}
-
 	sinceTime := time.Unix(sinceTS, 0)
-	for i := range comments {
-		comment := &comments[i]
 
-		// Only check comments created/updated after the last poll.
-		created, err := time.Parse("2006-01-02T15:04:05.000-0700", comment.Created)
+	// Paginate through comments (newest first). Jira doesn't support
+	// ordering by `updated`, so we keep scanning until every comment on
+	// a full page is older than sinceTime by BOTH created and updated —
+	// that guarantees we've seen any comment, including ones that were
+	// edited in-window, without fetching the entire history.
+	for page := 0; page < mentionCommentMaxPage; page++ {
+		resp, err := p.jiraAPI.GetIssueCommentsPage(commentCtx, user, issueKey, page*mentionCommentPage, mentionCommentPage, "-created")
 		if err != nil {
-			continue
+			p.log.Debug().Err(err).Str("issue", issueKey).Msg("poller: failed to get comments for mention check")
+			return false
 		}
-		if created.Before(sinceTime) {
-			continue
+		if len(resp.Comments) == 0 {
+			return false
 		}
 
-		// Check ADF body for mention nodes with user's account ID.
-		for _, id := range comment.Body.ExtractMentionIDs() {
-			if id == user.JiraAccountID {
-				return true
+		anyInWindow := false
+		for i := range resp.Comments {
+			comment := &resp.Comments[i]
+
+			ts := commentActivityTime(comment)
+			if ts.IsZero() || ts.Before(sinceTime) {
+				continue
 			}
+			anyInWindow = true
+
+			// Check ADF body for mention nodes with user's account ID.
+			for _, id := range comment.Body.ExtractMentionIDs() {
+				if id == user.JiraAccountID {
+					return true
+				}
+			}
+		}
+
+		// No comment on this page touched the window — older pages
+		// cannot either, since they contain strictly older `created`
+		// timestamps and any fresh `updated` would have landed here.
+		if !anyInWindow {
+			return false
+		}
+		if resp.StartAt+len(resp.Comments) >= resp.Total {
+			return false
 		}
 	}
 

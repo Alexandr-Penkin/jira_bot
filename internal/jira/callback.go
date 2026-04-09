@@ -231,20 +231,23 @@ func (cs *CallbackServer) FinalizeSiteConnection(ctx context.Context, telegramUs
 
 func (cs *CallbackServer) finalizeSiteConnection(ctx context.Context, telegramUserID int64, tokenResp *TokenResponse, resource AccessibleResource) error {
 	accountID := ""
+	displayName := ""
 	if myself, myselfErr := fetchMyself(ctx, resource.ID, tokenResp.AccessToken); myselfErr == nil {
 		accountID = myself.AccountID
+		displayName = myself.DisplayName
 	} else {
 		cs.log.Warn().Err(myselfErr).Msg("failed to fetch Jira account ID during OAuth")
 	}
 
 	user := &storage.User{
-		TelegramUserID: telegramUserID,
-		JiraCloudID:    resource.ID,
-		JiraAccountID:  accountID,
-		JiraSiteURL:    resource.URL,
-		AccessToken:    tokenResp.AccessToken,
-		RefreshToken:   tokenResp.RefreshToken,
-		TokenExpiresAt: cs.oauth.TokenExpiresAt(tokenResp.ExpiresIn),
+		TelegramUserID:  telegramUserID,
+		JiraCloudID:     resource.ID,
+		JiraAccountID:   accountID,
+		JiraDisplayName: displayName,
+		JiraSiteURL:     resource.URL,
+		AccessToken:     tokenResp.AccessToken,
+		RefreshToken:    tokenResp.RefreshToken,
+		TokenExpiresAt:  cs.oauth.TokenExpiresAt(tokenResp.ExpiresIn),
 	}
 
 	if err := cs.userRepo.Upsert(ctx, user); err != nil {

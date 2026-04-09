@@ -180,7 +180,13 @@ func (d *ADFDocument) ExtractMentionIDs() []string {
 
 func extractNodeMentions(node ADFNode) []string {
 	if node.Type == "mention" {
+		// The canonical key is `id`, but some Jira payloads (older API
+		// versions, inline cards) carry it under `accountId`. Accept
+		// either so we don't miss legitimate mentions.
 		if id, ok := node.Attrs["id"].(string); ok && id != "" {
+			return []string{id}
+		}
+		if id, ok := node.Attrs["accountId"].(string); ok && id != "" {
 			return []string{id}
 		}
 	}
