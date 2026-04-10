@@ -24,6 +24,11 @@ const (
 	maxResponseSize = 10 << 20 // 10 MB
 )
 
+// ErrTokenInvalid is returned when Jira rejects a refresh token as
+// permanently invalid (unauthorized_client / invalid_grant). The caller
+// should clear credentials and notify the user to reconnect.
+var ErrTokenInvalid = fmt.Errorf("jira refresh token is permanently invalid")
+
 // HTTPError is returned by doRequest/doAgileRequest for any non-2xx Jira
 // response. Callers that need to react to specific statuses (e.g. treat 404
 // as "already gone") should use errors.As rather than string-matching the

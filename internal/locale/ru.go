@@ -72,15 +72,16 @@ var ru = map[string]string{
 	"btn.issue_types":     "🏷 Типы задач",
 
 	// Connect
-	"connect.click":         "Нажмите кнопку ниже, чтобы подключить Jira Cloud:",
-	"connect.btn":           "🔗 Подключить Jira",
-	"connect.already":       "Вы уже подключены к Jira. Сначала используйте /disconnect.",
-	"connect.success":       "Подключено к Jira *%s* успешно\\!\n\nИспользуйте /me для проверки профиля или /help для списка команд\\.",
-	"connect.choose_site":   "У вас есть доступ к нескольким сайтам Jira. Выберите, к какому подключиться:",
-	"connect.site_expired":  "Время выбора сайта истекло. Используйте /connect снова.",
-	"disconnect.success":    "Jira отключена. Используйте /connect для подключения нового аккаунта.",
-	"disconnect.failed":     "Не удалось отключиться. Попробуйте ещё раз.",
-	"disconnect.not_linked": "Вы не подключены к Jira. Используйте /connect.",
+	"connect.click":            "Нажмите кнопку ниже, чтобы подключить Jira Cloud:",
+	"connect.btn":              "🔗 Подключить Jira",
+	"connect.already":          "Вы уже подключены к Jira. Сначала используйте /disconnect.",
+	"connect.success":          "Подключено к Jira *%s* успешно\\!\n\nИспользуйте /me для проверки профиля или /help для списка команд\\.",
+	"connect.choose_site":      "У вас есть доступ к нескольким сайтам Jira. Выберите, к какому подключиться:",
+	"connect.site_expired":     "Время выбора сайта истекло. Используйте /connect снова.",
+	"disconnect.success":       "Jira отключена. Используйте /connect для подключения нового аккаунта.",
+	"disconnect.failed":        "Не удалось отключиться. Попробуйте ещё раз.",
+	"disconnect.not_linked":    "Вы не подключены к Jira. Используйте /connect.",
+	"disconnect.token_expired": "Ваша сессия Jira истекла. Вы были автоматически отключены.\n\nИспользуйте /connect для повторного подключения.",
 
 	// Profile
 	"me.title":  "*Ваш профиль Jira:*\n\nИмя: %s\nEmail: %s\nСайт: %s",

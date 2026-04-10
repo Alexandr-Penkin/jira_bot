@@ -216,7 +216,14 @@ func (o *OAuthClient) requestToken(ctx context.Context, data url.Values) (*Token
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("token request failed: %d %s", resp.StatusCode, string(body))
+		bodyStr := string(body)
+		// Jira returns 400/401/403 with "unauthorized_client" or
+		// "invalid_grant" when the refresh token has been revoked or
+		// the OAuth app credentials changed.
+		if strings.Contains(bodyStr, "unauthorized_client") || strings.Contains(bodyStr, "invalid_grant") {
+			return nil, fmt.Errorf("token request failed: %d %s: %w", resp.StatusCode, bodyStr, ErrTokenInvalid)
+		}
+		return nil, fmt.Errorf("token request failed: %d %s", resp.StatusCode, bodyStr)
 	}
 
 	var tokenResp TokenResponse

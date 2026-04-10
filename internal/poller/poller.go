@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -234,6 +235,10 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 		cancel()
 
 		if err != nil {
+			if errors.Is(err, jira.ErrTokenInvalid) {
+				p.handleInvalidToken(ctx, user)
+				return
+			}
 			p.log.Error().Err(err).
 				Str("sub_type", sub.SubscriptionType).
 				Int64("user_id", telegramUserID).
@@ -595,6 +600,23 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 	if _, err := p.tgAPI.Send(msg); err != nil {
 		p.log.Error().Err(err).Int64("chat_id", pn.chatID).Msg("poller: failed to send notification")
 		return
+	}
+}
+
+// handleInvalidToken is called when Jira rejects a refresh token as permanently
+// invalid. It clears the user's credentials and sends a notification asking
+// them to reconnect.
+func (p *Poller) handleInvalidToken(ctx context.Context, user *storage.User) {
+	p.log.Warn().Int64("user_id", user.TelegramUserID).Msg("poller: refresh token invalid, auto-disconnecting user")
+
+	if err := p.userRepo.ClearJiraCredentials(ctx, user.TelegramUserID); err != nil {
+		p.log.Error().Err(err).Int64("user_id", user.TelegramUserID).Msg("poller: failed to clear credentials on token invalidation")
+	}
+
+	lang := locale.FromString(user.Language)
+	msg := tgbotapi.NewMessage(user.TelegramUserID, locale.T(lang, "disconnect.token_expired"))
+	if _, err := p.tgAPI.Send(msg); err != nil {
+		p.log.Error().Err(err).Int64("user_id", user.TelegramUserID).Msg("poller: failed to notify user about token invalidation")
 	}
 }
 

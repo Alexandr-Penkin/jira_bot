@@ -72,15 +72,16 @@ var en = map[string]string{
 	"btn.issue_types":     "🏷 Issue Types",
 
 	// Connect
-	"connect.click":         "Click the button below to connect your Jira Cloud account:",
-	"connect.btn":           "🔗 Connect Jira",
-	"connect.already":       "You are already connected to Jira. Use /disconnect first to reconnect.",
-	"connect.success":       "Connected to Jira site *%s* successfully\\!\n\nUse /me to check your profile or /help to see available commands\\.",
-	"connect.choose_site":   "You have access to multiple Jira sites. Please choose the one you want to connect:",
-	"connect.site_expired":  "Site selection has expired. Please use /connect again.",
-	"disconnect.success":    "Disconnected from Jira. Use /connect to link a new account.",
-	"disconnect.failed":     "Failed to disconnect. Please try again.",
-	"disconnect.not_linked": "You are not connected to Jira. Use /connect to link your account.",
+	"connect.click":            "Click the button below to connect your Jira Cloud account:",
+	"connect.btn":              "🔗 Connect Jira",
+	"connect.already":          "You are already connected to Jira. Use /disconnect first to reconnect.",
+	"connect.success":          "Connected to Jira site *%s* successfully\\!\n\nUse /me to check your profile or /help to see available commands\\.",
+	"connect.choose_site":      "You have access to multiple Jira sites. Please choose the one you want to connect:",
+	"connect.site_expired":     "Site selection has expired. Please use /connect again.",
+	"disconnect.success":       "Disconnected from Jira. Use /connect to link a new account.",
+	"disconnect.failed":        "Failed to disconnect. Please try again.",
+	"disconnect.not_linked":    "You are not connected to Jira. Use /connect to link your account.",
+	"disconnect.token_expired": "Your Jira session has expired. You have been automatically disconnected.\n\nPlease use /connect to reconnect.",
 
 	// Profile
 	"me.title":  "*Your Jira Profile:*\n\nName: %s\nEmail: %s\nSite: %s",
