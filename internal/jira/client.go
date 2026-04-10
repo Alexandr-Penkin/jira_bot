@@ -39,8 +39,15 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("jira API %s %s: %d %s", e.Method, e.Path, e.Status, e.Body)
 }
 
-var httpClient = &http.Client{
+var httpClient *http.Client = &http.Client{
 	Timeout: 30 * time.Second,
+}
+
+// SetHTTPClient replaces the package-level HTTP client used for all
+// outbound Jira and OAuth requests. Call before creating any Client
+// or OAuthClient instances.
+func SetHTTPClient(c *http.Client) {
+	httpClient = c
 }
 
 type Client struct {

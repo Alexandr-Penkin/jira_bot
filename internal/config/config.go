@@ -20,6 +20,7 @@ type Config struct {
 	EncryptionKey     string
 	JiraWebhookSecret string
 	AdminTelegramID   int64
+	ProxyURL          string
 }
 
 func Load() (*Config, error) {
@@ -36,6 +37,7 @@ func Load() (*Config, error) {
 		CallbackAddr:      getEnvOrDefault("CALLBACK_ADDR", ":8080"),
 		EncryptionKey:     os.Getenv("ENCRYPTION_KEY"),
 		JiraWebhookSecret: os.Getenv("JIRA_WEBHOOK_SECRET"),
+		ProxyURL:          os.Getenv("PROXY_URL"),
 	}
 
 	if cfg.TelegramToken == "" {

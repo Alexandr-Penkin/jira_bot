@@ -8,6 +8,8 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/rs/zerolog"
 
+	"net/http"
+
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/storage"
@@ -23,8 +25,8 @@ type Bot struct {
 	log     zerolog.Logger
 }
 
-func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(token)
+func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64, httpClient *http.Client) (*Bot, error) {
+	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,7 @@ import (
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/poller"
+	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/scheduler"
 	"SleepJiraBot/internal/storage"
 	"SleepJiraBot/internal/telegram"
@@ -79,6 +80,16 @@ func main() {
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
 
+	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 30*time.Second)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to create HTTP client with proxy")
+		return
+	}
+	if cfg.ProxyURL != "" {
+		log.Info().Str("proxy", cfg.ProxyURL).Msg("using SOCKS proxy for outbound connections")
+	}
+	jira.SetHTTPClient(httpClient)
+
 	oauthCfg := jira.OAuthConfig{
 		ClientID:     cfg.JiraClientID,
 		ClientSecret: cfg.JiraClientSecret,
@@ -92,7 +103,7 @@ func main() {
 
 	var bot *telegram.Bot
 	for attempt := 1; ; attempt++ {
-		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID)
+		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID, httpClient)
 		if err == nil {
 			break
 		}
