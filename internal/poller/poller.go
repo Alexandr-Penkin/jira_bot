@@ -13,7 +13,6 @@ import (
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
-	"SleepJiraBot/internal/notiflog"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 )
@@ -96,13 +95,12 @@ type Poller struct {
 	interval    time.Duration
 	batchWindow time.Duration
 	dedup       *notifydedup.Guard
-	notifLog    *notiflog.Log
 	pending     map[string]*pendingNotification
 	mu          sync.RWMutex
 	lastPollAt  time.Time
 }
 
-func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup *notifydedup.Guard, notifLog *notiflog.Log) *Poller {
+func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
@@ -118,7 +116,6 @@ func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI 
 		interval:    interval,
 		batchWindow: batchWindow,
 		dedup:       dedup,
-		notifLog:    notifLog,
 		pending:     make(map[string]*pendingNotification),
 	}
 }
@@ -430,27 +427,6 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 		return
 	}
 
-	p.notifLog.RecordReceived(notiflog.SourcePoller)
-
-	// Info-level log so the received-activity trail shows up in docker
-	// logs. Fields let an operator correlate a later "sent"/"dedup-dropped"
-	// event back to the exact Jira change that produced it.
-	fieldNames := make([]string, 0, len(changes))
-	for i := range changes {
-		fn := changeFieldName(changes[i].Field, changes[i].FieldID)
-		if fn != "" {
-			fieldNames = append(fieldNames, fn)
-		}
-	}
-	p.log.Info().
-		Str("source", "poller").
-		Int64("chat_id", chatID).
-		Str("issue", issue.Key).
-		Int("change_count", len(changes)).
-		Strs("fields", fieldNames).
-		Bool("mention", isMention).
-		Msg("received issue activity")
-
 	pn, exists := p.pending[key]
 	if !exists {
 		pn = &pendingNotification{
@@ -620,40 +596,6 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 		p.log.Error().Err(err).Int64("chat_id", pn.chatID).Msg("poller: failed to send notification")
 		return
 	}
-
-	// Build a compact change summary for the debug log: "Field: from → to"
-	// joined by "; ". Entries without a real change (pure mention) fall back
-	// to a mention marker so the admin can still tell the notification apart.
-	var changesSummary string
-	if hasChanges {
-		var parts []string
-		for _, c := range pn.changes {
-			fromVal := changeDisplayValue(c.FromString, c.From)
-			toVal := changeDisplayValue(c.ToString, c.To)
-			if fromVal == toVal {
-				continue
-			}
-			if fromVal == "" {
-				parts = append(parts, fmt.Sprintf("%s: %s", c.Field, toVal))
-			} else if toVal == "" {
-				parts = append(parts, fmt.Sprintf("%s: %s → —", c.Field, fromVal))
-			} else {
-				parts = append(parts, fmt.Sprintf("%s: %s → %s", c.Field, fromVal, toVal))
-			}
-		}
-		changesSummary = strings.Join(parts, "; ")
-	} else if pn.isMention {
-		changesSummary = "mention"
-	}
-
-	p.notifLog.Record(notiflog.Entry{
-		Source:   notiflog.SourcePoller,
-		ChatID:   pn.chatID,
-		IssueKey: pn.issueKey,
-		IssueURL: issueURL,
-		Changes:  changesSummary,
-		Merged:   len(pn.changes) > 1,
-	})
 }
 
 // backfillDisplayName fetches the user's Jira display name via /myself and

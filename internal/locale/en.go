@@ -354,13 +354,7 @@ var en = map[string]string{
 		"Users total: %d\n" +
 		"Users connected: %d\n" +
 		"Active subscriptions: %d\n" +
-		"Active schedules: %d\n\n" +
-		"*Notifications since %s:*\n" +
-		"Received \\(poller\\): %d\n" +
-		"Received \\(webhook\\): %d\n" +
-		"Sent \\(poller\\): %d\n" +
-		"Sent \\(webhook\\): %d\n" +
-		"Merged \\(batched\\): %d",
+		"Active schedules: %d",
 
 	"admin.users_title":       "*👥 Connected Users* (page %d):\n\n",
 	"admin.users_empty":       "No users found.",
@@ -387,8 +381,4 @@ var en = map[string]string{
 		"Pending notifications: %d\n" +
 		"Last poll: %s",
 	"admin.poller_never": "never",
-
-	"btn.admin_notiflog":   "🧾 Last notifications",
-	"admin.notiflog_title": "*🧾 Last sent notifications*",
-	"admin.notiflog_empty": "No notifications sent yet.",
 }

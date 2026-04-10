@@ -19,7 +19,6 @@ import (
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/locale"
-	"SleepJiraBot/internal/notiflog"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 )
@@ -41,10 +40,9 @@ type Handler struct {
 	eventQueue    chan Event
 	wg            sync.WaitGroup
 	dedup         *notifydedup.Guard
-	notifLog      *notiflog.Log
 }
 
-func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup *notifydedup.Guard, notifLog *notiflog.Log) *Handler {
+func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup *notifydedup.Guard) *Handler {
 	h := &Handler{
 		subRepo:       subRepo,
 		userRepo:      userRepo,
@@ -54,7 +52,6 @@ func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, t
 		sem:           make(chan struct{}, maxConcurrentJobs),
 		eventQueue:    make(chan Event, eventQueueSize),
 		dedup:         dedup,
-		notifLog:      notifLog,
 	}
 
 	return h
@@ -142,29 +139,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-
-	h.notifLog.RecordReceived(notiflog.SourceWebhook)
-
-	// Info-level so the incoming-event trail shows up in docker logs by
-	// default. Includes the fields an operator needs to correlate a
-	// notification with what Jira actually sent: event, issue key, project
-	// key, and the account that triggered the event.
-	recvLog := h.log.Info().
-		Str("source", "webhook").
-		Str("event", event.WebhookEvent)
-	if event.Issue != nil {
-		recvLog = recvLog.Str("issue", event.Issue.Key)
-		if event.Issue.Fields.Project != nil {
-			recvLog = recvLog.Str("project", event.Issue.Fields.Project.Key)
-		}
-	}
-	if event.User != nil {
-		recvLog = recvLog.Str("by", event.User.DisplayName)
-	}
-	if event.Comment != nil {
-		recvLog = recvLog.Str("comment_id", event.Comment.ID)
-	}
-	recvLog.Msg("received webhook event")
 
 	select {
 	case h.eventQueue <- event:
@@ -306,39 +280,6 @@ func (h *Handler) processEvent(event Event) {
 				Msg("failed to send notification")
 			continue
 		}
-
-		issueURL := ""
-		if issueKey != "" && u != nil && u.JiraSiteURL != "" {
-			issueURL = fmt.Sprintf("%s/browse/%s", u.JiraSiteURL, issueKey)
-		}
-		changesSummary := eventType
-		if event.Changelog != nil && len(event.Changelog.Items) > 0 {
-			var parts []string
-			for _, it := range event.Changelog.Items {
-				field := it.Field
-				if field == "" {
-					field = it.FieldID
-				}
-				fromVal := it.FromString
-				if fromVal == "" {
-					fromVal = it.From
-				}
-				toVal := it.ToString
-				if toVal == "" {
-					toVal = it.To
-				}
-				parts = append(parts, fmt.Sprintf("%s: %s → %s", field, fromVal, toVal))
-			}
-			changesSummary = eventType + " (" + strings.Join(parts, "; ") + ")"
-		}
-		h.notifLog.Record(notiflog.Entry{
-			Source:   notiflog.SourceWebhook,
-			ChatID:   matched[i].TelegramChatID,
-			IssueKey: issueKey,
-			IssueURL: issueURL,
-			Changes:  changesSummary,
-			Merged:   false,
-		})
 	}
 }
 

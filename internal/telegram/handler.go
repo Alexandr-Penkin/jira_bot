@@ -17,7 +17,6 @@ import (
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
-	"SleepJiraBot/internal/notiflog"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/storage"
 )
@@ -50,10 +49,9 @@ type Handler struct {
 	states           *stateManager
 	adminID          int64
 	pollerRef        *poller.Poller
-	notifLog         *notiflog.Log
 }
 
-func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64, notifLog *notiflog.Log) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64) *Handler {
 	return &Handler{
 		api:          api,
 		oauth:        oauth,
@@ -65,7 +63,6 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 		log:          log,
 		states:       newStateManager(),
 		adminID:      adminID,
-		notifLog:     notifLog,
 	}
 }
 

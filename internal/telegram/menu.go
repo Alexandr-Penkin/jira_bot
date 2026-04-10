@@ -153,9 +153,6 @@ func adminMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_poller"), "adm:poller"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_notiflog"), "adm:notiflog"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.admin_back"), "m:main"),
 		),
 	)

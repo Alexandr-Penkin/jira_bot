@@ -9,7 +9,6 @@ import (
 	"github.com/rs/zerolog"
 
 	"SleepJiraBot/internal/jira"
-	"SleepJiraBot/internal/notiflog"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/storage"
 )
@@ -24,7 +23,7 @@ type Bot struct {
 	log     zerolog.Logger
 }
 
-func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64, notifLog *notiflog.Log) (*Bot, error) {
+func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -34,7 +33,7 @@ func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, user
 
 	return &Bot{
 		api:     api,
-		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, adminID, notifLog),
+		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, adminID),
 		log:     log,
 	}, nil
 }

@@ -11,7 +11,6 @@ import (
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/locale"
-	"SleepJiraBot/internal/notiflog"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/storage"
 )
@@ -51,59 +50,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, cq *tgbotapi.Callback
 		h.sendPrompt(chatID, locale.T(lang, "admin.broadcast_enter"), lang)
 	case "poller":
 		h.handleAdminPoller(chatID, lang)
-	case "notiflog":
-		h.handleAdminNotifLog(chatID, lang)
 	}
-}
-
-func (h *Handler) handleAdminNotifLog(chatID int64, lang locale.Lang) {
-	entries := h.notifLog.Recent()
-
-	var sb strings.Builder
-	sb.WriteString(locale.T(lang, "admin.notiflog_title"))
-	sb.WriteString("\n\n")
-
-	if len(entries) == 0 {
-		sb.WriteString(locale.T(lang, "admin.notiflog_empty"))
-	} else {
-		for i := range entries {
-			e := &entries[i]
-			ts := e.At.Format("2006-01-02 15:04:05")
-			merged := "—"
-			if e.Merged {
-				merged = "✅"
-			}
-			link := format.EscapeMarkdown(e.IssueKey)
-			if e.IssueURL != "" {
-				link = fmt.Sprintf("[%s](%s)", format.EscapeMarkdown(e.IssueKey), e.IssueURL)
-			}
-			changes := e.Changes
-			// Keep each entry short enough to fit a 4096-char Telegram
-			// message even when 10 entries are concatenated.
-			const maxChangesLen = 200
-			if len(changes) > maxChangesLen {
-				changes = changes[:maxChangesLen] + "…"
-			}
-			fmt.Fprintf(&sb, "`%s` *%s* %s %s\n%s\n\n",
-				ts,
-				sourceLabel(e.Source),
-				link,
-				merged,
-				format.EscapeMarkdown(changes),
-			)
-		}
-	}
-
-	msg := tgbotapi.NewMessage(chatID, sb.String())
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	msg.DisableWebPagePreview = true
-	msg.ReplyMarkup = adminMenuKeyboard(lang)
-	h.sendMessage(msg)
-}
-
-// sourceLabel returns the display source name for a notiflog entry.
-func sourceLabel(s notiflog.Source) string {
-	return string(s)
 }
 
 func (h *Handler) handleAdminStats(ctx context.Context, chatID int64, lang locale.Lang) {
@@ -112,15 +59,8 @@ func (h *Handler) handleAdminStats(ctx context.Context, chatID int64, lang local
 	activeSubs, _ := h.subRepo.CountActive(ctx)
 	activeSchedules, _ := h.scheduleRepo.CountActive(ctx)
 
-	stats := h.notifLog.Snapshot()
-	since := stats.StartedAt.Format("2006-01-02 15:04:05")
-
 	text := locale.T(lang, "admin.stats",
-		totalUsers, connectedUsers, activeSubs, activeSchedules,
-		since,
-		stats.ReceivedPoller, stats.ReceivedWebhook,
-		stats.SentPoller, stats.SentWebhook,
-		stats.Merged)
+		totalUsers, connectedUsers, activeSubs, activeSchedules)
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.ReplyMarkup = adminMenuKeyboard(lang)
