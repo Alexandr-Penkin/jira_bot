@@ -41,6 +41,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Info().Str("signal", sig.String()).Msg("received shutdown signal")
+		cancel()
+	}()
+
 	mongo, err := storage.ConnectMongo(ctx, cfg.MongoURI, cfg.MongoDB, log)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to connect to MongoDB")
@@ -82,11 +90,23 @@ func main() {
 	jiraClient.StartCleanup(ctx)
 	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
 
-	bot, err := telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to create telegram bot")
-		cancel()
-		return
+	var bot *telegram.Bot
+	for attempt := 1; ; attempt++ {
+		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID)
+		if err == nil {
+			break
+		}
+		delay := time.Duration(attempt) * 5 * time.Second
+		if delay > 60*time.Second {
+			delay = 60 * time.Second
+		}
+		log.Warn().Err(err).Dur("retry_in", delay).Int("attempt", attempt).Msg("failed to create telegram bot, retrying")
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			log.Error().Msg("shutdown requested while waiting for Telegram API")
+			return
+		}
 	}
 
 	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, bot.API(), log)
@@ -136,9 +156,6 @@ func main() {
 
 	bot.SetCallbackServer(callbackServer)
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -185,9 +202,7 @@ func main() {
 		runWebhookRefresher(ctx, webhookMgr, log)
 	}()
 
-	sig := <-sigCh
-	log.Info().Str("signal", sig.String()).Msg("received shutdown signal")
-	cancel()
+	<-ctx.Done()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
