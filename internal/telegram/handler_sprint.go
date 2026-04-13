@@ -1169,16 +1169,22 @@ func statusCategory(issue *jira.Issue, doneStatuses, holdStatuses []string) stri
 		return "hold"
 	}
 
-	// When user has custom done statuses, use them instead of Jira category.
-	if len(doneStatuses) > 0 {
-		if containsLower(doneStatuses, nameLower) {
-			return "done"
-		}
-		// Fall through to Jira category or default logic for non-done.
-	} else if issue.Fields.Status.StatusCategory != nil {
-		return issue.Fields.Status.StatusCategory.Key
+	// Custom done statuses override Jira's done category.
+	if len(doneStatuses) > 0 && containsLower(doneStatuses, nameLower) {
+		return "done"
 	}
 
+	// Use Jira StatusCategory for non-done classification.
+	// When custom done list is set, ignore Jira's "done" category for statuses
+	// not in the list — the user explicitly chose which statuses are "done".
+	if issue.Fields.Status.StatusCategory != nil {
+		key := issue.Fields.Status.StatusCategory.Key
+		if key != "done" || len(doneStatuses) == 0 {
+			return key
+		}
+	}
+
+	// Fallback by name when Jira StatusCategory is absent.
 	if len(doneStatuses) == 0 {
 		switch nameLower {
 		case "done", "closed", "resolved", "completed":
