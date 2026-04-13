@@ -70,6 +70,8 @@ var ru = map[string]string{
 	"btn.language":        "🌐 Язык",
 	"btn.defaults":        "⚙️ Проект по умолчанию",
 	"btn.issue_types":     "🏷 Типы задач",
+	"btn.done_statuses":   "✅ Статусы готовности",
+	"btn.hold_statuses":   "⏸ Статусы блокировки",
 
 	// Connect
 	"connect.click":            "Нажмите кнопку ниже, чтобы подключить Jira Cloud:",
@@ -309,6 +311,28 @@ var ru = map[string]string{
 	"issuetypes.failed":        "Не удалось загрузить типы задач для этого проекта.",
 	"issuetypes.save_btn":      "💾 Сохранить",
 	"issuetypes.clear_btn":     "🗑 Сбросить фильтр",
+
+	// Настройки Done-статусов
+	"donestatuses.enter_project": "Введите ключ проекта для загрузки статусов (например `PROJ`):",
+	"donestatuses.choose":        "Выберите статусы, которые считать *выполненными* в спринт-отчётах.\nНажмите для переключения, затем Сохранить.",
+	"donestatuses.saved":         "Статусы готовности сохранены: *%s*.",
+	"donestatuses.cleared":       "Статусы готовности сброшены на значения по умолчанию (категория Jira).",
+	"donestatuses.current":       "\nСтатусы готовности: *%s*",
+	"donestatuses.none":          "По умолчанию (категория Jira)",
+	"donestatuses.failed":        "Не удалось загрузить статусы для этого проекта.",
+	"donestatuses.save_btn":      "💾 Сохранить",
+	"donestatuses.clear_btn":     "🗑 Сбросить",
+
+	// Настройки Hold-статусов
+	"holdstatuses.enter_project": "Введите ключ проекта для загрузки статусов (например `PROJ`):",
+	"holdstatuses.choose":        "Выберите статусы, которые считать *заблокированными* в спринт-отчётах.\nНажмите для переключения, затем Сохранить.",
+	"holdstatuses.saved":         "Статусы блокировки сохранены: *%s*.",
+	"holdstatuses.cleared":       "Статусы блокировки сброшены на значения по умолчанию.",
+	"holdstatuses.current":       "\nСтатусы блокировки: *%s*",
+	"holdstatuses.none":          "По умолчанию (Hold, On Hold, Blocked, Suspended)",
+	"holdstatuses.failed":        "Не удалось загрузить статусы для этого проекта.",
+	"holdstatuses.save_btn":      "💾 Сохранить",
+	"holdstatuses.clear_btn":     "🗑 Сбросить",
 
 	// Фильтры
 	"btn.filters":          "📋 Фильтры",

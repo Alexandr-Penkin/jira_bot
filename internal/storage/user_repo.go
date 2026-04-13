@@ -32,6 +32,8 @@ type User struct {
 	DailyDoneJQL       string        `bson:"daily_done_jql,omitempty"`
 	DailyDoingJQL      string        `bson:"daily_doing_jql,omitempty"`
 	DailyPlanJQL       string        `bson:"daily_plan_jql,omitempty"`
+	DoneStatuses       []string      `bson:"done_statuses,omitempty"`
+	HoldStatuses       []string      `bson:"hold_statuses,omitempty"`
 	CreatedTS          int64         `bson:"created_ts"`
 	ModifiedTS         int64         `bson:"modified_ts"`
 }
@@ -171,6 +173,30 @@ func (r *UserRepo) SetSprintIssueTypes(ctx context.Context, telegramUserID int64
 		"$set": bson.M{
 			"sprint_issue_types": issueTypes,
 			"modified_ts":        time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+func (r *UserRepo) SetDoneStatuses(ctx context.Context, telegramUserID int64, statuses []string) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"done_statuses": statuses,
+			"modified_ts":   time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+func (r *UserRepo) SetHoldStatuses(ctx context.Context, telegramUserID int64, statuses []string) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"hold_statuses": statuses,
+			"modified_ts":   time.Now().Unix(),
 		},
 	}
 	_, err := r.coll.UpdateOne(ctx, filter, update)

@@ -42,6 +42,10 @@ func profileMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.sp_field"), "a:spfield"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.done_statuses"), "a:donestatuses"),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.hold_statuses"), "a:holdstatuses"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.daily_jql"), "a:dailyjql"),
 		),
 		tgbotapi.NewInlineKeyboardRow(

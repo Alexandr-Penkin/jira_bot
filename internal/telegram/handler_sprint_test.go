@@ -37,7 +37,7 @@ func TestFormatSprintReport_Basic(t *testing.T) {
 		makeIssue("T-3", "Task", "To Do", "new", sp(2)),
 	}
 
-	result := formatSprintReport(locale.EN, "Sprint 1", "", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "Sprint 1", "", issues, nil, false, nil, nil, nil, nil, nil)
 
 	assert.Contains(t, result, "Sprint Report")
 	assert.Contains(t, result, "Sprint 1")
@@ -56,7 +56,7 @@ func TestFormatSprintReport_WithFilter(t *testing.T) {
 		makeIssue("T-3", "Sub-task", "To Do", "new", sp(1)),
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, []string{"Story", "Bug"}, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, []string{"Story", "Bug"}, false, nil, nil, nil, nil, nil)
 
 	assert.Contains(t, result, "Filter: Story, Bug")
 	assert.Contains(t, result, "Total issues: *2*")
@@ -69,7 +69,7 @@ func TestFormatSprintReport_SprintGoal(t *testing.T) {
 		makeIssue("T-1", "Story", "Done", "done", sp(1)),
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "Ship the *new* feature", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "Ship the *new* feature", issues, nil, false, nil, nil, nil, nil, nil)
 	assert.Contains(t, result, "\\*new\\*") // escaped markdown
 }
 
@@ -80,7 +80,7 @@ func TestFormatSprintReport_BugRatio(t *testing.T) {
 		makeIssue("T-3", "Bug", "To Do", "new", sp(1)),
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil, nil, nil)
 	assert.Contains(t, result, "Bug ratio: *2*/3")
 	assert.Contains(t, result, "(66%)")
 }
@@ -92,7 +92,7 @@ func TestFormatSprintReport_Unestimated(t *testing.T) {
 		makeIssue("T-3", "Task", "To Do", "new", nil),
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil, nil, nil)
 	assert.Contains(t, result, "Unestimated Issues:")
 	assert.Contains(t, result, "T-2")
 	assert.Contains(t, result, "T-3")
@@ -112,7 +112,7 @@ func TestFormatSprintReport_Overdue(t *testing.T) {
 	notDueSoon.Fields.DueDate = tomorrow
 
 	issues := []jira.Issue{notDone, doneOverdue, notDueSoon}
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil, nil, nil)
 
 	assert.Contains(t, result, "Overdue Issues:")
 	assert.Contains(t, result, "T-1")
@@ -129,7 +129,7 @@ func TestFormatSprintReport_PrioritySort(t *testing.T) {
 	issues[1].Fields.Priority = &jira.Priority{Name: "High"}
 	issues[2].Fields.Priority = &jira.Priority{Name: "Critical"}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil, nil, nil)
 
 	critIdx := strings.Index(result, "Critical")
 	highIdx := strings.Index(result, "High")
@@ -151,7 +151,7 @@ func TestFormatSprintReport_AssigneeSort(t *testing.T) {
 	issues[2].Fields.Assignee = &jira.JiraUser{DisplayName: "Bob"}
 	issues[3].Fields.Assignee = &jira.JiraUser{DisplayName: "Alice"}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil, nil, nil)
 
 	// Bob has 2 issues, Alice has 2 — tied, so alphabetical: Alice before Bob.
 	aliceIdx := strings.Index(result, "Alice")
@@ -178,7 +178,7 @@ func TestFormatSprintReport_ChangelogMetrics(t *testing.T) {
 		blockedCount:   3,
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, clm, nil, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, clm, nil, nil, nil, nil)
 
 	assert.Contains(t, result, "Scope Creep")
 	assert.Contains(t, result, "T-10")
@@ -205,7 +205,7 @@ func TestFormatSprintReport_Velocity(t *testing.T) {
 		trend:     21,
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, vel, nil)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, vel, nil, nil, nil)
 
 	assert.Contains(t, result, "Velocity")
 	assert.Contains(t, result, "34 SP")
@@ -225,7 +225,7 @@ func TestFormatSprintReport_Forecast(t *testing.T) {
 		end:   now.AddDate(0, 0, 7),
 	}
 
-	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, fc)
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, fc, nil, nil)
 
 	assert.Contains(t, result, "Forecast")
 	assert.Contains(t, result, "days left")
@@ -246,7 +246,7 @@ func TestComputeChangelogMetrics_ScopeCreep(t *testing.T) {
 		},
 	}
 
-	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil)
+	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil, nil, nil)
 
 	assert.Equal(t, []string{"T-1"}, m.scopeCreepKeys)
 	assert.Equal(t, float64(5), m.scopeCreepSP)
@@ -267,7 +267,7 @@ func TestComputeChangelogMetrics_CarryOver(t *testing.T) {
 		},
 	}
 
-	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil)
+	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil, nil, nil)
 
 	assert.Equal(t, []string{"T-1"}, m.carryOverKeys)
 	assert.Equal(t, float64(3), m.carryOverSP)
@@ -290,7 +290,7 @@ func TestComputeChangelogMetrics_CycleTime(t *testing.T) {
 		},
 	}
 
-	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil)
+	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil, nil, nil)
 
 	assert.Equal(t, 1, m.cycleCount)
 	assert.InDelta(t, 48, m.avgCycleHours, 1) // 2 days = 48 hours
@@ -313,7 +313,7 @@ func TestComputeChangelogMetrics_BlockedTime(t *testing.T) {
 		},
 	}
 
-	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil)
+	m := computeChangelogMetrics([]jira.Issue{issue}, "Sprint 10", sprintStart, nil, nil, nil)
 
 	assert.Equal(t, 1, m.blockedCount)
 	assert.InDelta(t, 24, m.totalBlockedH, 1)

@@ -164,6 +164,12 @@ func (h *Handler) handleMe(ctx context.Context, chatID, userID int64) tgbotapi.M
 	typesLabel := formatIssueTypesList(user.SprintIssueTypes, lang)
 	text += locale.T(lang, "issuetypes.current", format.EscapeMarkdown(typesLabel))
 
+	doneLabel := formatStatusesList(user.DoneStatuses, lang, statusKindDone)
+	text += locale.T(lang, "donestatuses.current", format.EscapeMarkdown(doneLabel))
+
+	holdLabel := formatStatusesList(user.HoldStatuses, lang, statusKindHold)
+	text += locale.T(lang, "holdstatuses.current", format.EscapeMarkdown(holdLabel))
+
 	assigneeFieldLabel := locale.T(lang, "assigneefield.default")
 	if user.AssigneeFieldID != "" {
 		assigneeFieldLabel = user.AssigneeFieldID

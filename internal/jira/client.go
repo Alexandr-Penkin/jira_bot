@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -616,6 +617,37 @@ func (c *Client) GetProjectIssueTypes(ctx context.Context, user *storage.User, p
 	}
 
 	return project.IssueTypes, nil
+}
+
+// GetProjectStatuses returns unique status names available in a project.
+func (c *Client) GetProjectStatuses(ctx context.Context, user *storage.User, projectKey string) ([]string, error) {
+	path := fmt.Sprintf("/project/%s/statuses", url.PathEscape(projectKey))
+	body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var issueTypeStatuses []struct {
+		Statuses []Status `json:"statuses"`
+	}
+	if err = json.Unmarshal(body, &issueTypeStatuses); err != nil {
+		return nil, fmt.Errorf("decode project statuses: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	var result []string
+	for _, its := range issueTypeStatuses {
+		for _, s := range its.Statuses {
+			lower := strings.ToLower(s.Name)
+			if _, ok := seen[lower]; ok {
+				continue
+			}
+			seen[lower] = struct{}{}
+			result = append(result, s.Name)
+		}
+	}
+
+	return result, nil
 }
 
 func (c *Client) GetMyFilters(ctx context.Context, user *storage.User) ([]Filter, error) {

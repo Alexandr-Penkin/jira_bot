@@ -70,6 +70,8 @@ var en = map[string]string{
 	"btn.language":        "🌐 Language",
 	"btn.defaults":        "⚙️ Default Project",
 	"btn.issue_types":     "🏷 Issue Types",
+	"btn.done_statuses":   "✅ Done Statuses",
+	"btn.hold_statuses":   "⏸ Hold Statuses",
 
 	// Connect
 	"connect.click":            "Click the button below to connect your Jira Cloud account:",
@@ -309,6 +311,28 @@ var en = map[string]string{
 	"issuetypes.failed":        "Failed to load issue types for this project.",
 	"issuetypes.save_btn":      "💾 Save",
 	"issuetypes.clear_btn":     "🗑 Clear filter",
+
+	// Done statuses settings
+	"donestatuses.enter_project": "Enter project key to load statuses (e.g. `PROJ`):",
+	"donestatuses.choose":        "Select statuses that should count as *Done* in sprint reports.\nTap to toggle, then press Save.",
+	"donestatuses.saved":         "Done statuses saved: *%s*.",
+	"donestatuses.cleared":       "Done statuses reset to default (uses Jira status category).",
+	"donestatuses.current":       "\nDone statuses: *%s*",
+	"donestatuses.none":          "Default (Jira category)",
+	"donestatuses.failed":        "Failed to load statuses for this project.",
+	"donestatuses.save_btn":      "💾 Save",
+	"donestatuses.clear_btn":     "🗑 Reset to default",
+
+	// Hold statuses settings
+	"holdstatuses.enter_project": "Enter project key to load statuses (e.g. `PROJ`):",
+	"holdstatuses.choose":        "Select statuses that should count as *Hold/Blocked* in sprint reports.\nTap to toggle, then press Save.",
+	"holdstatuses.saved":         "Hold statuses saved: *%s*.",
+	"holdstatuses.cleared":       "Hold statuses reset to default.",
+	"holdstatuses.current":       "\nHold statuses: *%s*",
+	"holdstatuses.none":          "Default (Hold, On Hold, Blocked, Suspended)",
+	"holdstatuses.failed":        "Failed to load statuses for this project.",
+	"holdstatuses.save_btn":      "💾 Save",
+	"holdstatuses.clear_btn":     "🗑 Reset to default",
 
 	// Filters
 	"btn.filters":          "📋 Filters",

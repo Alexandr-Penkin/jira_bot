@@ -341,13 +341,13 @@ func (h *Handler) handleSprintReport(ctx context.Context, chatID, userID int64, 
 	}
 	var clMetrics *changelogMetrics
 	if !sprintStart.IsZero() && sprintName != "" {
-		clMetrics = computeChangelogMetrics(result.Issues, sprintName, sprintStart, filterSet)
+		clMetrics = computeChangelogMetrics(result.Issues, sprintName, sprintStart, filterSet, user.DoneStatuses, user.HoldStatuses)
 	}
 
 	// Compute velocity (requires boardID).
 	var vel *velocityData
 	if boardID > 0 {
-		vel = h.computeVelocity(ctx, user, boardID, sprintID, result.Issues, filterSet)
+		vel = h.computeVelocity(ctx, user, boardID, sprintID, result.Issues, filterSet, user.DoneStatuses, user.HoldStatuses)
 	}
 
 	var fc *forecastData
@@ -356,7 +356,7 @@ func (h *Handler) handleSprintReport(ctx context.Context, chatID, userID int64, 
 	}
 
 	useCustomAssignee := user.AssigneeFieldID != ""
-	text := formatSprintReport(lang, sprintName, sprintGoal, result.Issues, user.SprintIssueTypes, useCustomAssignee, clMetrics, vel, fc)
+	text := formatSprintReport(lang, sprintName, sprintGoal, result.Issues, user.SprintIssueTypes, useCustomAssignee, clMetrics, vel, fc, user.DoneStatuses, user.HoldStatuses)
 
 	// Split long messages for Telegram's 4096-char limit.
 	parts := splitMessage(text, 4000)
@@ -386,7 +386,7 @@ type forecastData struct {
 	end   time.Time
 }
 
-func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues []jira.Issue, issueTypeFilter []string, useCustomAssignee bool, clm *changelogMetrics, vel *velocityData, fc *forecastData) string {
+func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues []jira.Issue, issueTypeFilter []string, useCustomAssignee bool, clm *changelogMetrics, vel *velocityData, fc *forecastData, doneStatuses, holdStatuses []string) string {
 	var sb strings.Builder
 
 	filterSet := make(map[string]bool, len(issueTypeFilter))
@@ -410,7 +410,7 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 			typeName = issues[i].Fields.IssueType.Name
 		}
 
-		cat := statusCategory(&issues[i])
+		cat := statusCategory(&issues[i], doneStatuses, holdStatuses)
 		sp := float64(0)
 		if issues[i].Fields.StoryPoints != nil {
 			sp = *issues[i].Fields.StoryPoints
@@ -849,7 +849,7 @@ type velocityData struct {
 }
 
 // computeChangelogMetrics extracts scope creep, carry-over, cycle time, and blocked time from issue changelogs.
-func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart time.Time, filterSet map[string]bool) *changelogMetrics {
+func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart time.Time, filterSet map[string]bool, doneStatuses, holdStatuses []string) *changelogMetrics {
 	m := &changelogMetrics{}
 	isFiltered := len(filterSet) > 0
 	var totalCycleH float64
@@ -868,7 +868,7 @@ func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart
 			sp = *issues[i].Fields.StoryPoints
 		}
 
-		cat := statusCategory(&issues[i])
+		cat := statusCategory(&issues[i], doneStatuses, holdStatuses)
 		if cat == "done" {
 			m.completedSP += sp
 		}
@@ -918,7 +918,7 @@ func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart
 						if isInProgressStatus(toLower) && firstInProgress.IsZero() {
 							firstInProgress = ts
 						}
-						if isDoneStatus(toLower) {
+						if isDoneStatus(toLower, doneStatuses) {
 							doneTime = ts
 						}
 					}
@@ -944,10 +944,10 @@ func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart
 					}
 					toLower := strings.ToLower(item.ToString)
 					fromLower := strings.ToLower(item.FromString)
-					if isHoldStatus(toLower) && blockedStart.IsZero() {
+					if isHoldStatus(toLower, holdStatuses) && blockedStart.IsZero() {
 						blockedStart = ts
 					}
-					if isHoldStatus(fromLower) && !blockedStart.IsZero() {
+					if isHoldStatus(fromLower, holdStatuses) && !blockedStart.IsZero() {
 						issueBlockedH += ts.Sub(blockedStart).Hours()
 						blockedStart = time.Time{}
 					}
@@ -999,7 +999,7 @@ func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart
 }
 
 // computeVelocity fetches SP for previous sprints to calculate velocity trend.
-func (h *Handler) computeVelocity(ctx context.Context, user *storage.User, boardID, currentSprintID int, currentIssues []jira.Issue, filterSet map[string]bool) *velocityData {
+func (h *Handler) computeVelocity(ctx context.Context, user *storage.User, boardID, currentSprintID int, currentIssues []jira.Issue, filterSet map[string]bool, doneStatuses, holdStatuses []string) *velocityData {
 	sprints, err := h.jiraAPI.GetSprints(ctx, user, boardID)
 	if err != nil {
 		return nil
@@ -1016,7 +1016,7 @@ func (h *Handler) computeVelocity(ctx context.Context, user *storage.User, board
 		if isFiltered && !filterSet[typeName] {
 			continue
 		}
-		if statusCategory(&currentIssues[i]) == "done" && currentIssues[i].Fields.StoryPoints != nil {
+		if statusCategory(&currentIssues[i], doneStatuses, holdStatuses) == "done" && currentIssues[i].Fields.StoryPoints != nil {
 			currentDoneSP += *currentIssues[i].Fields.StoryPoints
 		}
 	}
@@ -1064,7 +1064,7 @@ func (h *Handler) computeVelocity(ctx context.Context, user *storage.User, board
 				if isFiltered && !filterSet[tn] {
 					continue
 				}
-				if statusCategory(&res.Issues[j]) == "done" && res.Issues[j].Fields.StoryPoints != nil {
+				if statusCategory(&res.Issues[j], doneStatuses, holdStatuses) == "done" && res.Issues[j].Fields.StoryPoints != nil {
 					doneSP += *res.Issues[j].Fields.StoryPoints
 				}
 			}
@@ -1101,7 +1101,10 @@ func isInProgressStatus(name string) bool {
 	return false
 }
 
-func isDoneStatus(name string) bool {
+func isDoneStatus(name string, custom []string) bool {
+	if len(custom) > 0 {
+		return containsLower(custom, name)
+	}
 	switch name {
 	case "done", "closed", "resolved", "completed":
 		return true
@@ -1109,10 +1112,22 @@ func isDoneStatus(name string) bool {
 	return false
 }
 
-func isHoldStatus(name string) bool {
+func isHoldStatus(name string, custom []string) bool {
+	if len(custom) > 0 {
+		return containsLower(custom, name)
+	}
 	switch name {
 	case "hold", "on hold", "blocked", "suspended":
 		return true
+	}
+	return false
+}
+
+func containsLower(list []string, name string) bool {
+	for _, s := range list {
+		if strings.EqualFold(s, name) {
+			return true
+		}
 	}
 	return false
 }
@@ -1142,25 +1157,35 @@ func formatDuration(hours float64) string {
 	return fmt.Sprintf("%.1fd", hours/24)
 }
 
-func statusCategory(issue *jira.Issue) string {
+func statusCategory(issue *jira.Issue, doneStatuses, holdStatuses []string) string {
 	if issue.Fields.Status == nil {
 		return "new"
 	}
 	nameLower := strings.ToLower(issue.Fields.Status.Name)
 
-	// Check hold by status name first — Jira has no built-in "hold" category,
+	// Check hold first — Jira has no built-in "hold" category,
 	// so these statuses typically fall under "indeterminate".
-	switch nameLower {
-	case "hold", "on hold", "blocked", "suspended":
+	if isHoldStatus(nameLower, holdStatuses) {
 		return "hold"
 	}
 
-	if issue.Fields.Status.StatusCategory != nil {
+	// When user has custom done statuses, use them instead of Jira category.
+	if len(doneStatuses) > 0 {
+		if containsLower(doneStatuses, nameLower) {
+			return "done"
+		}
+		// Fall through to Jira category or default logic for non-done.
+	} else if issue.Fields.Status.StatusCategory != nil {
 		return issue.Fields.Status.StatusCategory.Key
 	}
+
+	if len(doneStatuses) == 0 {
+		switch nameLower {
+		case "done", "closed", "resolved", "completed":
+			return "done"
+		}
+	}
 	switch nameLower {
-	case "done", "closed", "resolved", "completed":
-		return "done"
 	case "in progress", "in review", "in development", "review":
 		return "indeterminate"
 	default:

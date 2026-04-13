@@ -274,6 +274,18 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 	case "it_clear":
 		h.handleIssueTypeClear(ctx, cq)
 		return
+	case "ds_save":
+		h.handleStatusSave(ctx, cq, statusKindDone)
+		return
+	case "ds_clear":
+		h.handleStatusClear(ctx, cq, statusKindDone)
+		return
+	case "hs_save":
+		h.handleStatusSave(ctx, cq, statusKindHold)
+		return
+	case "hs_clear":
+		h.handleStatusClear(ctx, cq, statusKindHold)
+		return
 	}
 
 	if len(parts) < 2 {
@@ -306,6 +318,14 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 	case "it_toggle":
 		if len(parts) >= 2 {
 			h.handleIssueTypeToggle(ctx, cq, parts[1])
+		}
+	case "ds_toggle":
+		if len(parts) >= 2 {
+			h.handleStatusToggle(ctx, cq, parts[1], statusKindDone)
+		}
+	case "hs_toggle":
+		if len(parts) >= 2 {
+			h.handleStatusToggle(ctx, cq, parts[1], statusKindHold)
 		}
 	case "site_select":
 		h.handleSiteSelectCallback(ctx, cq, parts)
@@ -495,6 +515,10 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.sendPrompt(chatID, locale.T(lang, "defaults.enter_project"), lang)
 	case "issuetypes":
 		h.handleIssueTypesStart(ctx, chatID, userID)
+	case "donestatuses":
+		h.handleStatusesStart(ctx, chatID, userID, statusKindDone)
+	case "holdstatuses":
+		h.handleStatusesStart(ctx, chatID, userID, statusKindHold)
 	case "assigneefield":
 		h.handleAssigneeFieldStart(ctx, chatID, userID)
 	case "spfield":
@@ -650,6 +674,24 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 			return
 		}
 		h.showIssueTypePicker(ctx, chatID, userID, projectKey)
+
+	case "ds_project":
+		h.states.Clear(userID)
+		projectKey := strings.ToUpper(text)
+		if !validateProjectKey(projectKey) {
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
+			return
+		}
+		h.showStatusPicker(ctx, chatID, userID, projectKey, statusKindDone)
+
+	case "hs_project":
+		h.states.Clear(userID)
+		projectKey := strings.ToUpper(text)
+		if !validateProjectKey(projectKey) {
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
+			return
+		}
+		h.showStatusPicker(ctx, chatID, userID, projectKey, statusKindHold)
 
 	case "daily_jql_done":
 		h.states.Clear(userID)
