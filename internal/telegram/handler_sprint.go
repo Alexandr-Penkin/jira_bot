@@ -372,13 +372,28 @@ func (h *Handler) handleSprintReport(ctx context.Context, chatID, userID int64, 
 }
 
 type issueStats struct {
-	total      int
-	done       int
-	inProgress int
-	hold       int
-	todo       int
-	sp         float64
-	spDone     float64
+	total         int
+	done          int
+	inProgress    int
+	hold          int
+	todo          int
+	sp            float64
+	spDone        float64
+	timeSpentH    float64 // logged hours across all issues
+	timeSpentDone float64 // logged hours on done issues
+}
+
+// issueTimeSpentHours returns effective logged hours for an issue,
+// preferring the aggregate (includes sub-tasks) when present.
+func issueTimeSpentHours(f *jira.IssueFields) float64 {
+	secs := f.AggregateTimeSpent
+	if secs < f.TimeSpent {
+		secs = f.TimeSpent
+	}
+	if secs <= 0 {
+		return 0
+	}
+	return float64(secs) / 3600
 }
 
 type forecastData struct {
@@ -415,6 +430,7 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		if issues[i].Fields.StoryPoints != nil {
 			sp = *issues[i].Fields.StoryPoints
 		}
+		tsH := issueTimeSpentHours(&issues[i].Fields)
 
 		// Always track by-type stats for all issues.
 		ts := byType[typeName]
@@ -424,9 +440,11 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		}
 		ts.total++
 		ts.sp += sp
+		ts.timeSpentH += tsH
 		if cat == "done" {
 			ts.done++
 			ts.spDone += sp
+			ts.timeSpentDone += tsH
 		}
 
 		// Overall and by-assignee stats only for filtered types (or all if no filter).
@@ -436,10 +454,12 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 
 		overall.total++
 		overall.sp += sp
+		overall.timeSpentH += tsH
 		switch cat {
 		case "done":
 			overall.done++
 			overall.spDone += sp
+			overall.timeSpentDone += tsH
 		case "indeterminate":
 			overall.inProgress++
 		case "hold":
@@ -465,9 +485,11 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		}
 		ps.total++
 		ps.sp += sp
+		ps.timeSpentH += tsH
 		if cat == "done" {
 			ps.done++
 			ps.spDone += sp
+			ps.timeSpentDone += tsH
 		}
 
 		// Unestimated issues.
@@ -497,10 +519,12 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		}
 		as.total++
 		as.sp += sp
+		as.timeSpentH += tsH
 		switch cat {
 		case "done":
 			as.done++
 			as.spDone += sp
+			as.timeSpentDone += tsH
 		case "indeterminate":
 			as.inProgress++
 		case "hold":
@@ -561,6 +585,14 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		fmt.Fprintf(&sb, " (%d%%)\n", int(overall.spDone*100/overall.sp))
 	}
 
+	if overall.timeSpentH > 0 {
+		fmt.Fprintf(&sb, "⏱ *%s:* %s", locale.T(lang, "sprint.logged"), formatDuration(overall.timeSpentH))
+		if overall.spDone > 0 {
+			fmt.Fprintf(&sb, " (%s / SP)", formatDuration(overall.timeSpentDone/overall.spDone))
+		}
+		sb.WriteString("\n")
+	}
+
 	if overall.total > 0 {
 		sb.WriteString("\n")
 		writeProgressBar(&sb, overall.done, overall.total)
@@ -600,6 +632,12 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		fmt.Fprintf(&sb, "• %s: %d/%d ✅", typeName, ts.done, ts.total)
 		if ts.sp > 0 {
 			fmt.Fprintf(&sb, " (%.0f/%.0f SP)", ts.spDone, ts.sp)
+		}
+		if ts.timeSpentH > 0 {
+			fmt.Fprintf(&sb, " ⏱ %s", formatDuration(ts.timeSpentH))
+			if ts.spDone > 0 {
+				fmt.Fprintf(&sb, " · %s/SP", formatDuration(ts.timeSpentDone/ts.spDone))
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -643,6 +681,12 @@ func formatSprintReport(lang locale.Lang, sprintName, sprintGoal string, issues 
 		}
 		if as.hold > 0 {
 			fmt.Fprintf(&sb, ", ⏸%d", as.hold)
+		}
+		if as.timeSpentH > 0 {
+			fmt.Fprintf(&sb, " ⏱ %s", formatDuration(as.timeSpentH))
+			if as.spDone > 0 {
+				fmt.Fprintf(&sb, " · %s/SP", formatDuration(as.timeSpentDone/as.spDone))
+			}
 		}
 		sb.WriteString("\n")
 	}

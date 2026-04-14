@@ -37,20 +37,22 @@ type ChangeItem struct {
 }
 
 type IssueFields struct {
-	Summary        string       `json:"summary"`
-	Description    *ADFDocument `json:"description"`
-	Status         *Status      `json:"status"`
-	Priority       *Priority    `json:"priority"`
-	Assignee       *JiraUser    `json:"assignee"`
-	Reporter       *JiraUser    `json:"reporter"`
-	IssueType      *IssueType   `json:"issuetype"`
-	Project        *Project     `json:"project"`
-	Created        string       `json:"created"`
-	Updated        string       `json:"updated"`
-	DueDate        string       `json:"duedate"`
-	Labels         []string     `json:"labels"`
-	StoryPoints    *float64     `json:"-"`
-	CustomAssignee *JiraUser    `json:"-"`
+	Summary            string       `json:"summary"`
+	Description        *ADFDocument `json:"description"`
+	Status             *Status      `json:"status"`
+	Priority           *Priority    `json:"priority"`
+	Assignee           *JiraUser    `json:"assignee"`
+	Reporter           *JiraUser    `json:"reporter"`
+	IssueType          *IssueType   `json:"issuetype"`
+	Project            *Project     `json:"project"`
+	Created            string       `json:"created"`
+	Updated            string       `json:"updated"`
+	DueDate            string       `json:"duedate"`
+	Labels             []string     `json:"labels"`
+	TimeSpent          int64        `json:"timespent,omitempty"`
+	AggregateTimeSpent int64        `json:"aggregatetimespent,omitempty"`
+	StoryPoints        *float64     `json:"-"`
+	CustomAssignee     *JiraUser    `json:"-"`
 }
 
 type Project struct {

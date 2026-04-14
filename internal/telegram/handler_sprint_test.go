@@ -98,6 +98,27 @@ func TestFormatSprintReport_Unestimated(t *testing.T) {
 	assert.Contains(t, result, "T-3")
 }
 
+func TestFormatSprintReport_TimeSpentVsSP(t *testing.T) {
+	issues := []jira.Issue{
+		makeIssue("T-1", "Story", "Done", "done", sp(5)),
+		makeIssue("T-2", "Story", "Done", "done", sp(3)),
+		makeIssue("T-3", "Story", "In Progress", "indeterminate", sp(2)),
+	}
+	issues[0].Fields.TimeSpent = 4 * 3600  // 4h
+	issues[1].Fields.TimeSpent = 12 * 3600 // 12h
+	issues[2].Fields.TimeSpent = 2 * 3600  // 2h
+	// Aggregate should win when larger.
+	issues[0].Fields.AggregateTimeSpent = 6 * 3600 // 6h
+
+	result := formatSprintReport(locale.EN, "S1", "", issues, nil, false, nil, nil, nil, nil, nil)
+
+	// Total logged = 6 + 12 + 2 = 20h
+	assert.Contains(t, result, "Logged:")
+	assert.Contains(t, result, "20.0h")
+	// Done SP = 8, done logged = 18h → 2.25h/SP ≈ 2.3h
+	assert.Contains(t, result, "/ SP")
+}
+
 func TestFormatSprintReport_Overdue(t *testing.T) {
 	today := time.Now().Truncate(24 * time.Hour)
 	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")

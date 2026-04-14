@@ -208,7 +208,7 @@ func (c *Client) SearchIssuesWithStoryPoints(ctx context.Context, user *storage.
 // If the user configured a specific field, only that field is requested.
 // Otherwise, common field names are requested for auto-detection.
 func storyPointsQueryFields(spFieldID string) string {
-	base := "summary,status,priority,assignee,issuetype,duedate,project"
+	base := "summary,status,priority,assignee,issuetype,duedate,project,timespent,aggregatetimespent"
 	if spFieldID != "" {
 		return base + "," + spFieldID
 	}

@@ -300,6 +300,7 @@ var en = map[string]string{
 	"sprint.forecast_on_track": "on track",
 	"sprint.forecast_at_risk":  "at risk",
 	"sprint.days_left":         "%d days left",
+	"sprint.logged":            "Logged",
 
 	// Issue Types settings
 	"issuetypes.enter_project": "Enter project key to load issue types (e.g. `PROJ`):",

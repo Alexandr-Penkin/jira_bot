@@ -300,6 +300,7 @@ var ru = map[string]string{
 	"sprint.forecast_on_track": "по плану",
 	"sprint.forecast_at_risk":  "под угрозой",
 	"sprint.days_left":         "%d дн. осталось",
+	"sprint.logged":            "Списано",
 
 	// Настройка типов задач
 	"issuetypes.enter_project": "Введите ключ проекта для загрузки типов задач (например `PROJ`):",
