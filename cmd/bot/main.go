@@ -80,7 +80,10 @@ func main() {
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
 
-	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 30*time.Second)
+	// Telegram long-polling sets u.Timeout=60s server-side, so the HTTP
+	// client timeout must comfortably exceed that (request body read
+	// time + network jitter) to avoid aborting healthy long polls.
+	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 90*time.Second)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create HTTP client with proxy")
 		return
