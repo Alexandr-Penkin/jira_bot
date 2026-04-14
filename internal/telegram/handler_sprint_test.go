@@ -99,8 +99,9 @@ func TestFormatSprintReport_Unestimated(t *testing.T) {
 }
 
 func TestFormatSprintReport_Overdue(t *testing.T) {
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	today := time.Now().Truncate(24 * time.Hour)
+	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
+	tomorrow := today.AddDate(0, 0, 1).Format("2006-01-02")
 
 	notDone := makeIssue("T-1", "Story", "To Do", "new", sp(1))
 	notDone.Fields.DueDate = yesterday
