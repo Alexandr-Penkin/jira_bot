@@ -49,6 +49,16 @@ type Handler struct {
 	states           *stateManager
 	adminID          int64
 	pollerRef        *poller.Poller
+	webhookRepo      *storage.WebhookRepo
+	webhookEvents    func() int64
+}
+
+// SetWebhookStats wires the webhook registration repo and an accessor for
+// the in-process webhook event counter. Both are admin-only read paths so
+// it's fine for them to be nil; admin stats will just omit the section.
+func (h *Handler) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int64) {
+	h.webhookRepo = repo
+	h.webhookEvents = eventsFn
 }
 
 func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64) *Handler {

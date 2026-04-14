@@ -59,8 +59,18 @@ func (h *Handler) handleAdminStats(ctx context.Context, chatID int64, lang local
 	activeSubs, _ := h.subRepo.CountActive(ctx)
 	activeSchedules, _ := h.scheduleRepo.CountActive(ctx)
 
+	var webhookCount int64
+	if h.webhookRepo != nil {
+		webhookCount, _ = h.webhookRepo.CountAll(ctx)
+	}
+	var webhookEvents int64
+	if h.webhookEvents != nil {
+		webhookEvents = h.webhookEvents()
+	}
+
 	text := locale.T(lang, "admin.stats",
-		totalUsers, connectedUsers, activeSubs, activeSchedules)
+		totalUsers, connectedUsers, activeSubs, activeSchedules,
+		webhookCount, webhookEvents)
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.ReplyMarkup = adminMenuKeyboard(lang)

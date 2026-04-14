@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -31,15 +32,23 @@ const (
 )
 
 type Handler struct {
-	subRepo       *storage.SubscriptionRepo
-	userRepo      *storage.UserRepo
-	tgAPI         *tgbotapi.BotAPI
-	webhookSecret string
-	log           zerolog.Logger
-	sem           chan struct{}
-	eventQueue    chan Event
-	wg            sync.WaitGroup
-	dedup         *notifydedup.Guard
+	subRepo        *storage.SubscriptionRepo
+	userRepo       *storage.UserRepo
+	tgAPI          *tgbotapi.BotAPI
+	webhookSecret  string
+	log            zerolog.Logger
+	sem            chan struct{}
+	eventQueue     chan Event
+	wg             sync.WaitGroup
+	dedup          *notifydedup.Guard
+	eventsReceived atomic.Int64
+}
+
+// EventsReceived returns the number of webhook events accepted and queued
+// for processing since this handler started. Rejected (bad method, invalid
+// signature, unparseable body, queue full) events are not counted.
+func (h *Handler) EventsReceived() int64 {
+	return h.eventsReceived.Load()
 }
 
 func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup *notifydedup.Guard) *Handler {
@@ -142,6 +151,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case h.eventQueue <- event:
+		h.eventsReceived.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "ok")
 	default:

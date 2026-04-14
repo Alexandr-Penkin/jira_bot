@@ -52,6 +52,10 @@ func (b *Bot) SetPollerRef(p *poller.Poller) {
 	b.handler.SetPollerRef(p)
 }
 
+func (b *Bot) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int64) {
+	b.handler.SetWebhookStats(repo, eventsFn)
+}
+
 func (b *Bot) SetOnScheduleChange(fn func()) {
 	b.handler.SetOnScheduleChange(fn)
 }

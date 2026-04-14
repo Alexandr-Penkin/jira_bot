@@ -101,6 +101,11 @@ func (r *WebhookRepo) GetExpiringBefore(ctx context.Context, threshold time.Time
 	return regs, nil
 }
 
+// CountAll returns the total number of webhook registrations.
+func (r *WebhookRepo) CountAll(ctx context.Context) (int64, error) {
+	return r.coll.CountDocuments(ctx, bson.M{})
+}
+
 func (r *WebhookRepo) Delete(ctx context.Context, id bson.ObjectID) error {
 	_, err := r.coll.DeleteOne(ctx, bson.M{"_id": id})
 	return err

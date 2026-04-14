@@ -144,6 +144,7 @@ func main() {
 	bot.SetPollerRef(issuePoller)
 
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
+	bot.SetWebhookStats(webhookRepo, webhookHandler.EventsReceived)
 
 	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, subRepo, webhookMgr, bot.API(), log)
 	callbackServer.Handle("/webhook", webhookHandler)

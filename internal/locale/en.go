@@ -379,7 +379,9 @@ var en = map[string]string{
 		"Users total: %d\n" +
 		"Users connected: %d\n" +
 		"Active subscriptions: %d\n" +
-		"Active schedules: %d",
+		"Active schedules: %d\n" +
+		"Webhooks registered: %d\n" +
+		"Webhook events received: %d",
 
 	"admin.users_title":       "*👥 Connected Users* (page %d):\n\n",
 	"admin.users_empty":       "No users found.",
