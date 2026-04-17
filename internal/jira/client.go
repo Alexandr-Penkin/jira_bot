@@ -779,3 +779,81 @@ func (c *Client) ensureValidToken(ctx context.Context, user *storage.User) (stri
 
 	return newAccessToken, nil
 }
+
+// --- Issue creation ---
+
+// GetCreateMetaIssueTypes returns issue types available for creating issues in the given project.
+func (c *Client) GetCreateMetaIssueTypes(ctx context.Context, user *storage.User, projectKey string) ([]CreateMetaIssueType, error) {
+	path := fmt.Sprintf("/issue/createmeta/%s/issuetypes", url.PathEscape(projectKey))
+	body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		IssueTypes []CreateMetaIssueType `json:"issueTypes"`
+	}
+	if err = json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode createmeta issue types: %w", err)
+	}
+
+	return resp.IssueTypes, nil
+}
+
+// GetCreateMetaFields returns fields available when creating an issue of the given type in a project.
+func (c *Client) GetCreateMetaFields(ctx context.Context, user *storage.User, projectKey, issueTypeID string) ([]CreateMetaField, error) {
+	path := fmt.Sprintf("/issue/createmeta/%s/issuetypes/%s",
+		url.PathEscape(projectKey), url.PathEscape(issueTypeID))
+	body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Fields []CreateMetaField `json:"fields"`
+	}
+	if err = json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode createmeta fields: %w", err)
+	}
+
+	return resp.Fields, nil
+}
+
+// CreateIssue creates a new Jira issue with the provided fields payload.
+func (c *Client) CreateIssue(ctx context.Context, user *storage.User, fields map[string]interface{}) (*CreateIssueResponse, error) {
+	payload := map[string]interface{}{
+		"fields": fields,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal issue: %w", err)
+	}
+
+	body, err := c.doRequest(ctx, user, http.MethodPost, "/issue", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+
+	var resp CreateIssueResponse
+	if err = json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode create issue response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// GetPriorities returns all available priorities for the Jira instance.
+func (c *Client) GetPriorities(ctx context.Context, user *storage.User) ([]Priority, error) {
+	body, err := c.doRequest(ctx, user, http.MethodGet, "/priority", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var priorities []Priority
+	if err = json.Unmarshal(body, &priorities); err != nil {
+		return nil, fmt.Errorf("decode priorities: %w", err)
+	}
+
+	return priorities, nil
+}

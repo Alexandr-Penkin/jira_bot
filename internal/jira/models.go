@@ -1,5 +1,44 @@
 package jira
 
+import "encoding/json"
+
+// CreateMeta types for issue creation wizard.
+
+type CreateMetaIssueType struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type CreateMetaField struct {
+	FieldID         string            `json:"fieldId"`
+	Key             string            `json:"key"`
+	Name            string            `json:"name"`
+	Required        bool              `json:"required"`
+	HasDefaultValue bool              `json:"hasDefaultValue"`
+	DefaultValue    json.RawMessage   `json:"defaultValue,omitempty"`
+	Schema          CreateMetaSchema  `json:"schema"`
+	AllowedValues   []CreateMetaValue `json:"allowedValues,omitempty"`
+}
+
+type CreateMetaSchema struct {
+	Type     string `json:"type"`
+	System   string `json:"system,omitempty"`
+	Custom   string `json:"custom,omitempty"`
+	CustomID int    `json:"customId,omitempty"`
+}
+
+type CreateMetaValue struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+}
+
+type CreateIssueResponse struct {
+	ID   string `json:"id"`
+	Key  string `json:"key"`
+	Self string `json:"self"`
+}
+
 type JiraUser struct {
 	AccountID   string            `json:"accountId"`
 	DisplayName string            `json:"displayName"`
@@ -70,6 +109,7 @@ type StatusCategory struct {
 }
 
 type Priority struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 

@@ -25,7 +25,7 @@ type Bot struct {
 	log     zerolog.Logger
 }
 
-func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64, httpClient *http.Client) (*Bot, error) {
+func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64, httpClient *http.Client) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, user
 
 	return &Bot{
 		api:     api,
-		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, adminID),
+		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, templateRepo, log, adminID),
 		log:     log,
 	}, nil
 }

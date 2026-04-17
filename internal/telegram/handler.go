@@ -44,6 +44,7 @@ type Handler struct {
 	subRepo          *storage.SubscriptionRepo
 	scheduleRepo     *storage.ScheduleRepo
 	webhookMgr       *jira.WebhookManager
+	templateRepo     *storage.TemplateRepo
 	onScheduleChange func()
 	log              zerolog.Logger
 	states           *stateManager
@@ -61,7 +62,7 @@ func (h *Handler) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int
 	h.webhookEvents = eventsFn
 }
 
-func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, log zerolog.Logger, adminID int64) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64) *Handler {
 	return &Handler{
 		api:          api,
 		oauth:        oauth,
@@ -70,6 +71,7 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 		subRepo:      subRepo,
 		scheduleRepo: scheduleRepo,
 		webhookMgr:   webhookMgr,
+		templateRepo: templateRepo,
 		log:          log,
 		states:       newStateManager(),
 		adminID:      adminID,
@@ -225,6 +227,8 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 		return h.handleUnschedule(ctx, chatID, userID)
 	case "schedules":
 		return h.handleSchedules(ctx, chatID, userID)
+	case "create":
+		return h.handleCreate(ctx, chatID, userID, args)
 	case "admin":
 		lang := h.getLang(ctx, userID)
 		if !h.isAdmin(userID) {
@@ -355,6 +359,8 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDailyJQLEdit(ctx, cq, "daily_jql_plan", "daily_jql.enter_plan")
 	case "djql_reset":
 		h.handleDailyJQLReset(ctx, cq)
+	case "cr":
+		h.handleCreateCallback(ctx, cq, parts)
 	case "issue_action":
 		h.handleIssueActionCallback(ctx, cq, parts)
 	case "adm":
@@ -535,6 +541,10 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.handleStoryPointsFieldStart(ctx, chatID, userID)
 	case "dailyjql":
 		h.handleDailyJQLStart(ctx, chatID, userID)
+	case "create":
+		h.handleCreateStart(ctx, chatID, userID)
+	case "templates":
+		h.handleTemplatesList(ctx, chatID, userID)
 	case "lang":
 		h.sendMessage(h.handleLang(chatID, lang))
 	case "cancel":
@@ -718,6 +728,24 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	case "schedule":
 		h.states.Clear(userID)
 		h.sendMessage(withMenuButton(h.handleSchedule(ctx, chatID, userID, text), lang))
+
+	case "create_project":
+		h.handleCreateProjectInput(ctx, chatID, userID, text)
+
+	case "create_summary":
+		h.handleCreateSummaryInput(ctx, chatID, userID, text)
+
+	case "create_description":
+		h.handleCreateDescriptionInput(ctx, chatID, userID, text)
+
+	case "create_assignee_search":
+		h.handleCreateAssigneeSearch(ctx, chatID, userID, text)
+
+	case "create_custom_field":
+		h.handleCreateCustomFieldInput(ctx, chatID, userID, text)
+
+	case "create_template_name":
+		h.handleCreateTemplateNameInput(ctx, chatID, userID, text)
 
 	case "admin_broadcast":
 		h.states.Clear(userID)

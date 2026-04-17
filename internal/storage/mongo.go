@@ -115,6 +115,12 @@ func ensureIndexes(ctx context.Context, db *mongo.Database, log zerolog.Logger) 
 			},
 		},
 		{
+			collection: "issue_templates",
+			model: mongo.IndexModel{
+				Keys: bson.D{{Key: "telegram_user_id", Value: 1}},
+			},
+		},
+		{
 			collection: "webhook_registrations",
 			model: mongo.IndexModel{
 				Keys: bson.D{{Key: "telegram_user_id", Value: 1}},

@@ -79,6 +79,7 @@ func main() {
 	subRepo := storage.NewSubscriptionRepo(mongo.Database())
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
+	templateRepo := storage.NewTemplateRepo(mongo.Database())
 
 	// Telegram long-polling sets u.Timeout=60s server-side, so the HTTP
 	// client timeout must comfortably exceed that (request body read
@@ -106,7 +107,7 @@ func main() {
 
 	var bot *telegram.Bot
 	for attempt := 1; ; attempt++ {
-		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, log, cfg.AdminTelegramID, httpClient)
+		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, templateRepo, log, cfg.AdminTelegramID, httpClient)
 		if err == nil {
 			break
 		}

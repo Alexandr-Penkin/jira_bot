@@ -74,6 +74,7 @@ func issuesMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.assign_to_me"), "a:assign"),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.create_issue"), "a:create"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.back"), "m:main"),
