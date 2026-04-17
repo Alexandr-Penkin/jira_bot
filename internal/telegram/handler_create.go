@@ -22,6 +22,13 @@ func htmlEscape(s string) string {
 	return html.EscapeString(s)
 }
 
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 const (
 	maxSummaryLen      = 255
 	maxDescriptionLen  = 10000
@@ -739,10 +746,21 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 	// Extract description template and detect required Epic/parent field if present.
 	for i := range fields {
 		f := &fields[i]
-		if f.Key == "description" && f.HasDefaultValue && len(f.DefaultValue) > 0 {
+		h.log.Debug().
+			Str("field_id", f.FieldID).
+			Str("key", f.Key).
+			Str("name", f.Name).
+			Bool("has_default", f.HasDefaultValue).
+			Int("default_len", len(f.DefaultValue)).
+			Msg("createmeta field")
+		if (f.Key == "description" || f.FieldID == "description") && f.HasDefaultValue && len(f.DefaultValue) > 0 {
 			var adfDoc jira.ADFDocument
 			if json.Unmarshal(f.DefaultValue, &adfDoc) == nil {
 				extracted := adfDoc.ExtractText()
+				h.log.Debug().
+					Int("extracted_len", len(extracted)).
+					Str("raw_preview", truncateStr(string(f.DefaultValue), 200)).
+					Msg("description default extracted")
 				if strings.TrimSpace(extracted) != "" {
 					data["desc_template"] = extracted
 					data["desc_template_raw"] = string(f.DefaultValue)
