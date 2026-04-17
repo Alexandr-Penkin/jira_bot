@@ -222,6 +222,11 @@ func (h *Handler) handleCreateEpicKeyInput(ctx context.Context, chatID, userID i
 	}
 
 	data["epic_key"] = key
+	if data["epic_retry"] == "1" {
+		delete(data, "epic_retry")
+		h.handleCreateConfirm(ctx, chatID, userID, data, lang)
+		return
+	}
 	h.states.Set(userID, "create_cf_pending", data)
 	h.startCustomFields(ctx, chatID, userID, data, lang)
 }
@@ -564,6 +569,11 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 		if summary := data["epic_sum:"+epicKey]; summary != "" {
 			data["epic_summary"] = summary
 		}
+		if data["epic_retry"] == "1" {
+			delete(data, "epic_retry")
+			h.handleCreateConfirm(ctx, chatID, userID, data, lang)
+			return
+		}
 		h.states.Set(userID, "create_cf_pending", data)
 		h.startCustomFields(ctx, chatID, userID, data, lang)
 
@@ -640,16 +650,20 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 				}
 			}
 		}
-		if f.Required {
-			// Team-managed project: parent points to the Epic for Task/Story.
-			if f.Key == "parent" && !strings.EqualFold(data["issue_type_name"], "Epic") {
-				data["epic_required"] = "1"
+		// Record Epic-capable field id regardless of required flag, so we can
+		// auto-retry when a workflow validator (not createmeta) demands one.
+		if f.Key == "parent" && !strings.EqualFold(data["issue_type_name"], "Epic") {
+			if data["epic_field_id"] == "" {
 				data["epic_field_id"] = "parent"
 			}
-			// Classic project: Epic Link is a custom field.
-			if f.Schema.Custom == "com.pyxis.greenhopper.jira:gh-epic-link" {
+			if f.Required {
 				data["epic_required"] = "1"
-				data["epic_field_id"] = f.FieldID
+			}
+		}
+		if f.Schema.Custom == "com.pyxis.greenhopper.jira:gh-epic-link" {
+			data["epic_field_id"] = f.FieldID
+			if f.Required {
+				data["epic_required"] = "1"
 			}
 		}
 	}
@@ -691,7 +705,20 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	resp, err := h.jiraAPI.CreateIssue(ctx, user, payload)
 	if err != nil {
 		h.log.Error().Err(err).Msg("failed to create issue")
-		if detail := extractJiraErrorDetail(err); detail != "" {
+		detail := extractJiraErrorDetail(err)
+		if detail != "" && data["epic_key"] == "" && isEpicRequiredError(detail) {
+			// Workflow validator demands an Epic even though createmeta didn't
+			// flag it. Mark required, show picker, retry after selection.
+			data["epic_required"] = "1"
+			data["epic_retry"] = "1"
+			if data["epic_field_id"] == "" {
+				data["epic_field_id"] = "parent"
+			}
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.epic_required_retry")))
+			h.createShowEpicOptions(ctx, chatID, userID, data, lang)
+			return
+		}
+		if detail != "" {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_detail", detail)))
 		} else {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
@@ -706,6 +733,13 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	msg.DisableWebPagePreview = true
 	h.sendMessage(msg)
+}
+
+// isEpicRequiredError reports whether a Jira error message indicates the
+// missing field is an Epic (validator- or field-enforced).
+func isEpicRequiredError(detail string) bool {
+	d := strings.ToLower(detail)
+	return strings.Contains(d, "epic") && strings.Contains(d, "required")
 }
 
 // extractJiraErrorDetail returns a human-readable summary from a Jira 4xx error

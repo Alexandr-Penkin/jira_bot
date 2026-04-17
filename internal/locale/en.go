@@ -452,6 +452,7 @@ var en = map[string]string{
 	"create.enter_epic_key":       "Enter Epic key (e.g. PROJ-1):",
 	"create.epic_key_invalid":     "Invalid Epic key. Use format PROJ-123.",
 	"create.failed_detail":        "Failed to create issue: %s",
+	"create.epic_required_retry":  "Jira requires an Epic for this issue. Please choose one:",
 	"create.confirm":              "Create",
 	"create.save_tmpl":            "Save as template",
 	"create.success":              "Issue created: [%s](%s)",
