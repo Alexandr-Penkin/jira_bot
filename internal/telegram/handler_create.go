@@ -663,10 +663,19 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			}
 			if selectedLabel != "" {
 				data["cfval:"+fieldID] = selectedLabel
-				// Templates ➤ plugin doesn't expose bodies via createmeta —
-				// Jira fills in description server-side. Tell user, show body
-				// after creation (see handleCreateConfirm).
-				h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.template_selected", selectedLabel)))
+			}
+			// The Templates ➤ plugin doesn't expose bodies via createmeta and
+			// Jira doesn't fill them on REST create. Work around it by pulling
+			// the description from the most recent issue that used this
+			// template option — preferring issues whose summary matches the
+			// template name, since those are most likely the seed/test tickets
+			// created directly from the template.
+			body := h.fetchTemplateBodyFromRecent(ctx, userID, data["project"], fieldID, valueID, selectedLabel)
+			if body != "" {
+				data["desc_template"] = body
+				h.sendTemplateBody(chatID, lang, body)
+			} else if selectedLabel != "" {
+				h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.template_no_sample", selectedLabel)))
 			}
 		}
 		h.states.Set(userID, "create_summary", data)
@@ -835,6 +844,49 @@ func (h *Handler) sendTemplateBody(chatID int64, lang locale.Lang, body string) 
 	h.sendMessage(msg)
 }
 
+// fetchTemplateBodyFromRecent finds the latest non-trivial description in the
+// same project that used this template option — used as a proxy for the
+// template body, since the Templates ➤ plugin doesn't expose bodies via REST.
+// Prefers issues whose summary matches the template name.
+func (h *Handler) fetchTemplateBodyFromRecent(ctx context.Context, userID int64, projectKey, fieldID, optionID, templateName string) string {
+	if projectKey == "" || fieldID == "" || optionID == "" {
+		return ""
+	}
+	user, err := h.userRepo.GetByTelegramID(ctx, userID)
+	if err != nil || user == nil {
+		return ""
+	}
+	cfID := strings.TrimPrefix(fieldID, "customfield_")
+	baseJQL := fmt.Sprintf(`project = %q AND cf[%s] = %s`, projectKey, cfID, optionID)
+
+	attempts := []string{}
+	if trimmed := strings.TrimSpace(templateName); trimmed != "" {
+		escaped := strings.ReplaceAll(trimmed, `"`, `\"`)
+		attempts = append(attempts, baseJQL+fmt.Sprintf(` AND summary ~ "\"%s\"" ORDER BY created DESC`, escaped))
+	}
+	attempts = append(attempts, baseJQL+` ORDER BY created DESC`)
+
+	for _, jql := range attempts {
+		result, err := h.jiraAPI.SearchIssues(ctx, user, jql, 5)
+		if err != nil || result == nil {
+			h.log.Debug().Err(err).Str("jql", jql).Msg("template sample search failed")
+			continue
+		}
+		for _, issue := range result.Issues {
+			full, ferr := h.jiraAPI.GetIssue(ctx, user, issue.Key)
+			if ferr != nil || full == nil || full.Fields.Description == nil {
+				continue
+			}
+			body := strings.TrimSpace(full.Fields.Description.ExtractText())
+			if body != "" {
+				h.log.Debug().Str("source_issue", issue.Key).Str("jql", jql).Int("len", len(body)).Msg("template body sourced from recent issue")
+				return body
+			}
+		}
+	}
+	return ""
+}
+
 // isTemplateField heuristically detects the "Templates" custom field by name.
 func isTemplateField(name string) bool {
 	n := strings.ToLower(name)
@@ -881,19 +933,6 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	msg.DisableWebPagePreview = true
 	h.sendMessage(msg)
-
-	// If the user picked a Templates ➤ option but supplied no description,
-	// Jira fills it server-side. Fetch and echo it now for tap-to-copy.
-	tplFieldID := data["template_field_id"]
-	userSuppliedDesc := strings.TrimSpace(data["description"]) != "" && data["desc_is_adf"] != "true"
-	if tplFieldID != "" && data["cf:"+tplFieldID] != "" && !userSuppliedDesc {
-		if issue, ferr := h.jiraAPI.GetIssue(ctx, user, resp.Key); ferr == nil && issue != nil {
-			body := strings.TrimSpace(issue.Fields.Description.ExtractText())
-			if body != "" {
-				h.sendTemplateBody(chatID, lang, body)
-			}
-		}
-	}
 }
 
 // isEpicRequiredError reports whether a Jira error message indicates the
