@@ -644,17 +644,32 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			if avJSON := data["cfav:"+fieldID]; avJSON != "" {
 				_ = json.Unmarshal([]byte(avJSON), &values)
 			}
+			var selectedLabel, optionValue string
 			for _, v := range values {
 				if v.ID == valueID {
-					label := v.Name
-					if label == "" {
-						label = v.Value
+					selectedLabel = v.Name
+					if selectedLabel == "" {
+						selectedLabel = v.Value
 					}
-					if label != "" {
-						data["cfval:"+fieldID] = label
-					}
+					optionValue = v.Value
 					break
 				}
+			}
+			if selectedLabel != "" {
+				data["cfval:"+fieldID] = selectedLabel
+			}
+			// Priority: description default (actual body Jira puts in the
+			// issue) → option's Value (some plugins store the body there) →
+			// option label as last resort.
+			templateBody := data["desc_template"]
+			if templateBody == "" && optionValue != "" && optionValue != selectedLabel {
+				templateBody = optionValue
+			}
+			if templateBody == "" {
+				templateBody = selectedLabel
+			}
+			if templateBody != "" {
+				h.sendTemplateBody(chatID, lang, templateBody)
 			}
 		}
 		h.states.Set(userID, "create_summary", data)
@@ -780,16 +795,18 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 		}
 	}
 
-	// Echo the description default so the user can tap-to-copy the template
-	// body before typing anything. Fires once per issue-type selection.
-	if body := data["desc_template"]; body != "" {
-		h.sendTemplateBody(chatID, lang, body)
-	}
-
 	if templateFieldID != "" && data["cf:"+templateFieldID] == "" {
+		// Echo happens inside the Templates callback so the user sees it
+		// right after picking an option.
 		data["template_field_id"] = templateFieldID
 		h.createShowTemplateField(chatID, userID, data, lang)
 		return
+	}
+
+	// No Templates field — echo the issue-type's description default (if any)
+	// so the user can tap-to-copy the body.
+	if body := data["desc_template"]; body != "" {
+		h.sendTemplateBody(chatID, lang, body)
 	}
 
 	h.states.Set(userID, "create_summary", data)
