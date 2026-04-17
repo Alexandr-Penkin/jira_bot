@@ -731,7 +731,7 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 		return
 	}
 
-	fields, err := h.jiraAPI.GetCreateMetaFields(ctx, user, data["project"], data["issue_type_id"])
+	fields, rawByID, err := h.jiraAPI.GetCreateMetaFieldsRaw(ctx, user, data["project"], data["issue_type_id"])
 	if err != nil {
 		h.log.Error().Err(err).Msg("failed to get create meta fields")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_fields")))
@@ -803,6 +803,13 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 			}
 			if templateFieldID == "" && isTemplateField(cf.Name) && len(cf.AllowedValues) > 0 {
 				templateFieldID = cf.FieldID
+				if raw, ok := rawByID[cf.FieldID]; ok {
+					h.log.Debug().
+						Str("field_id", cf.FieldID).
+						Str("name", cf.Name).
+						Str("raw", string(raw)).
+						Msg("templates field raw JSON")
+				}
 				continue
 			}
 			cfOrder = append(cfOrder, cf.FieldID)

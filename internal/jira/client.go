@@ -802,21 +802,41 @@ func (c *Client) GetCreateMetaIssueTypes(ctx context.Context, user *storage.User
 
 // GetCreateMetaFields returns fields available when creating an issue of the given type in a project.
 func (c *Client) GetCreateMetaFields(ctx context.Context, user *storage.User, projectKey, issueTypeID string) ([]CreateMetaField, error) {
+	fields, _, err := c.GetCreateMetaFieldsRaw(ctx, user, projectKey, issueTypeID)
+	return fields, err
+}
+
+// GetCreateMetaFieldsRaw returns typed fields alongside the raw JSON for each
+// field keyed by fieldId — useful for diagnosing plugin-managed fields whose
+// structure isn't fully captured by CreateMetaField.
+func (c *Client) GetCreateMetaFieldsRaw(ctx context.Context, user *storage.User, projectKey, issueTypeID string) ([]CreateMetaField, map[string]json.RawMessage, error) {
 	path := fmt.Sprintf("/issue/createmeta/%s/issuetypes/%s",
 		url.PathEscape(projectKey), url.PathEscape(issueTypeID))
 	body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var resp struct {
 		Fields []CreateMetaField `json:"fields"`
 	}
 	if err = json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("decode createmeta fields: %w", err)
+		return nil, nil, fmt.Errorf("decode createmeta fields: %w", err)
 	}
 
-	return resp.Fields, nil
+	var rawResp struct {
+		Fields []json.RawMessage `json:"fields"`
+	}
+	rawByID := make(map[string]json.RawMessage, len(resp.Fields))
+	if err = json.Unmarshal(body, &rawResp); err == nil {
+		for i, raw := range rawResp.Fields {
+			if i < len(resp.Fields) {
+				rawByID[resp.Fields[i].FieldID] = raw
+			}
+		}
+	}
+
+	return resp.Fields, rawByID, nil
 }
 
 // CreateIssue creates a new Jira issue with the provided fields payload.
