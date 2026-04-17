@@ -453,6 +453,7 @@ var ru = map[string]string{
 	"create.epic_key_invalid":     "Неверный ключ Epic. Формат: PROJ-123.",
 	"create.failed_detail":        "Не удалось создать задачу: %s",
 	"create.epic_required_retry":  "Jira требует Epic для этой задачи. Выберите:",
+	"create.template_copy_header": "Текст шаблона (нажмите, чтобы скопировать):",
 	"create.confirm":              "Создать",
 	"create.save_tmpl":            "Сохранить шаблон",
 	"create.success":              "Задача создана: [%s](%s)",

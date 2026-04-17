@@ -352,6 +352,52 @@ func (h *Handler) createShowAssigneeOptions(chatID, userID int64, data map[strin
 	h.sendMessage(msg)
 }
 
+// createShowTemplateField presents the Templates custom field options before the summary step.
+func (h *Handler) createShowTemplateField(chatID, userID int64, data map[string]string, lang locale.Lang) {
+	fieldID := data["template_field_id"]
+	fieldName := data["cfname:"+fieldID]
+	required := data["cfreq:"+fieldID] == "1"
+
+	var values []jira.CreateMetaValue
+	if avJSON := data["cfav:"+fieldID]; avJSON != "" {
+		_ = json.Unmarshal([]byte(avJSON), &values)
+	}
+	if len(values) == 0 {
+		h.states.Set(userID, "create_summary", data)
+		h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
+		return
+	}
+	if len(values) > maxSelectOptions {
+		values = values[:maxSelectOptions]
+	}
+
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(values)+1)
+	for _, v := range values {
+		displayName := v.Name
+		if displayName == "" {
+			displayName = v.Value
+		}
+		cbData := "cr:tplf:" + v.ID
+		if len(cbData) > 60 {
+			cbData = cbData[:60]
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(displayName, cbData),
+		))
+	}
+	if !required {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.skip"), "cr:tplf:skip"),
+		))
+	}
+
+	h.states.Set(userID, "create_tplf_pending", data)
+
+	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.choose_field", fieldName))
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	h.sendMessage(msg)
+}
+
 // createMaybeAskEpic routes to the Epic picker step if Epic is required, otherwise skips to custom fields.
 func (h *Handler) createMaybeAskEpic(ctx context.Context, chatID, userID int64, data map[string]string, lang locale.Lang) {
 	if data["epic_required"] != "1" {
@@ -581,6 +627,40 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.states.Set(userID, "create_epic_key", data)
 		h.sendPrompt(chatID, locale.T(lang, "create.enter_epic_key"), lang)
 
+	case "tplf":
+		if len(parts) < 3 {
+			return
+		}
+		fieldID := data["template_field_id"]
+		if fieldID != "" && parts[2] != "skip" {
+			valueID := parts[2]
+			data["cf:"+fieldID] = valueID
+			var values []jira.CreateMetaValue
+			if avJSON := data["cfav:"+fieldID]; avJSON != "" {
+				_ = json.Unmarshal([]byte(avJSON), &values)
+			}
+			var selectedName string
+			for _, v := range values {
+				if v.ID == valueID {
+					selectedName = v.Name
+					if selectedName == "" {
+						selectedName = v.Value
+					}
+					break
+				}
+			}
+			if selectedName != "" {
+				data["cfval:"+fieldID] = selectedName
+				codeBody := strings.NewReplacer("\\", "\\\\", "`", "\\`").Replace(selectedName)
+				header := format.EscapeMarkdown(locale.T(lang, "create.template_copy_header"))
+				copyMsg := tgbotapi.NewMessage(chatID, header+"\n```\n"+codeBody+"\n```")
+				copyMsg.ParseMode = tgbotapi.ModeMarkdownV2
+				h.sendMessage(copyMsg)
+			}
+		}
+		h.states.Set(userID, "create_summary", data)
+		h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
+
 	case "cf":
 		if len(parts) < 4 {
 			return
@@ -670,11 +750,11 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 
 	// Store custom fields metadata in state.
 	customFields := filterSupportedCustomFields(fields)
+	var templateFieldID string
 	if len(customFields) > 0 {
 		var cfOrder []string
 		for i := range customFields {
 			cf := &customFields[i]
-			cfOrder = append(cfOrder, cf.FieldID)
 			data["cfname:"+cf.FieldID] = cf.Name
 			data["cftype:"+cf.FieldID] = cf.Schema.Type
 			if cf.Required {
@@ -684,13 +764,32 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 				avJSON, _ := json.Marshal(cf.AllowedValues)
 				data["cfav:"+cf.FieldID] = string(avJSON)
 			}
+			if templateFieldID == "" && isTemplateField(cf.Name) && len(cf.AllowedValues) > 0 {
+				templateFieldID = cf.FieldID
+				continue
+			}
+			cfOrder = append(cfOrder, cf.FieldID)
 		}
-		data["cf_order"] = strings.Join(cfOrder, ",")
-		data["cf_idx"] = "0"
+		if len(cfOrder) > 0 {
+			data["cf_order"] = strings.Join(cfOrder, ",")
+			data["cf_idx"] = "0"
+		}
+	}
+
+	if templateFieldID != "" && data["cf:"+templateFieldID] == "" {
+		data["template_field_id"] = templateFieldID
+		h.createShowTemplateField(chatID, userID, data, lang)
+		return
 	}
 
 	h.states.Set(userID, "create_summary", data)
 	h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
+}
+
+// isTemplateField heuristically detects the "Templates" custom field by name.
+func isTemplateField(name string) bool {
+	n := strings.ToLower(name)
+	return strings.Contains(n, "template") || strings.Contains(n, "шаблон")
 }
 
 func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64, data map[string]string, lang locale.Lang) {
