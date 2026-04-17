@@ -6,6 +6,7 @@ Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issue
 
 - **Jira OAuth 2.0** — secure authentication with encrypted token storage (AES-256-GCM)
 - **Issue management** — view, comment, transition, and assign issues
+- **Issue creation** — interactive wizard with Epic linking, Templates selector (tap-to-copy body), priority/assignee pickers, reusable templates, and quick-create syntax
 - **Subscriptions** — real-time notifications on issue/project changes (polling + webhooks)
 - **Sprint reports** — view sprint boards and progress
 - **Scheduled reports** — cron-based JQL/sprint reports delivered to chats
@@ -25,6 +26,8 @@ Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issue
 | `/comment <KEY> <text>` | Add comment |
 | `/transition <KEY>` | Change issue status |
 | `/assign <KEY>` | Assign issue to self |
+| `/create` | Interactive issue creation wizard |
+| `/create <PROJECT> <Type> \| <Summary> \| <Description>` | Quick-create issue |
 | `/sprint [PROJECT] [BOARD] [SPRINT]` | Sprint board |
 | `/filters` | Jira saved filters |
 | `/watch` / `/unwatch` | Subscribe/unsubscribe to changes |

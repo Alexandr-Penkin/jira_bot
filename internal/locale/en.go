@@ -22,7 +22,9 @@ var en = map[string]string{
 		"/list `JQL` — Search issues by JQL\n" +
 		"/comment `PROJ-123 text` — Add a comment\n" +
 		"/transition `PROJ-123` — Change issue status\n" +
-		"/assign `PROJ-123` — Assign issue to yourself\n\n" +
+		"/assign `PROJ-123` — Assign issue to yourself\n" +
+		"/create — Create a new issue (interactive wizard)\n" +
+		"/create `PROJ Type | Summary | Description` — Quick create\n\n" +
 		"*Notifications:*\n" +
 		"/watch `PROJ` — Subscribe to project notifications\n" +
 		"/unwatch — Remove all subscriptions in this chat\n" +

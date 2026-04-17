@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,10 @@ import (
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/storage"
 )
+
+func htmlEscape(s string) string {
+	return html.EscapeString(s)
+}
 
 const (
 	maxSummaryLen      = 255
@@ -639,22 +644,34 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			if avJSON := data["cfav:"+fieldID]; avJSON != "" {
 				_ = json.Unmarshal([]byte(avJSON), &values)
 			}
-			var selectedName string
+			var selectedLabel, templateBody string
 			for _, v := range values {
 				if v.ID == valueID {
-					selectedName = v.Name
-					if selectedName == "" {
-						selectedName = v.Value
+					selectedLabel = v.Name
+					if selectedLabel == "" {
+						selectedLabel = v.Value
+					}
+					// Prefer Value as the template body (often contains the
+					// long form), fall back to Name for plain select lists.
+					templateBody = v.Value
+					if templateBody == "" {
+						templateBody = v.Name
 					}
 					break
 				}
 			}
-			if selectedName != "" {
-				data["cfval:"+fieldID] = selectedName
-				codeBody := strings.NewReplacer("\\", "\\\\", "`", "\\`").Replace(selectedName)
-				header := format.EscapeMarkdown(locale.T(lang, "create.template_copy_header"))
-				copyMsg := tgbotapi.NewMessage(chatID, header+"\n```\n"+codeBody+"\n```")
-				copyMsg.ParseMode = tgbotapi.ModeMarkdownV2
+			if selectedLabel != "" {
+				data["cfval:"+fieldID] = selectedLabel
+			}
+			if templateBody != "" {
+				h.log.Debug().
+					Str("field_id", fieldID).
+					Str("value_id", valueID).
+					Int("body_len", len(templateBody)).
+					Msg("echoing template body")
+				header := htmlEscape(locale.T(lang, "create.template_copy_header"))
+				copyMsg := tgbotapi.NewMessage(chatID, header+"\n<pre>"+htmlEscape(templateBody)+"</pre>")
+				copyMsg.ParseMode = tgbotapi.ModeHTML
 				h.sendMessage(copyMsg)
 			}
 		}
