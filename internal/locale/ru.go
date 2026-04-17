@@ -456,6 +456,7 @@ var ru = map[string]string{
 	"create.failed_detail":        "Не удалось создать задачу: %s",
 	"create.epic_required_retry":  "Jira требует Epic для этой задачи. Выберите:",
 	"create.template_copy_header": "Текст шаблона (нажмите, чтобы скопировать):",
+	"create.template_selected":    "Шаблон выбран: %s. Jira подставит описание при создании.",
 	"create.confirm":              "Создать",
 	"create.save_tmpl":            "Сохранить шаблон",
 	"create.success":              "Задача создана: [%s](%s)",

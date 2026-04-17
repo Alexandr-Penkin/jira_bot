@@ -651,32 +651,22 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			if avJSON := data["cfav:"+fieldID]; avJSON != "" {
 				_ = json.Unmarshal([]byte(avJSON), &values)
 			}
-			var selectedLabel, optionValue string
+			var selectedLabel string
 			for _, v := range values {
 				if v.ID == valueID {
 					selectedLabel = v.Name
 					if selectedLabel == "" {
 						selectedLabel = v.Value
 					}
-					optionValue = v.Value
 					break
 				}
 			}
 			if selectedLabel != "" {
 				data["cfval:"+fieldID] = selectedLabel
-			}
-			// Priority: description default (actual body Jira puts in the
-			// issue) → option's Value (some plugins store the body there) →
-			// option label as last resort.
-			templateBody := data["desc_template"]
-			if templateBody == "" && optionValue != "" && optionValue != selectedLabel {
-				templateBody = optionValue
-			}
-			if templateBody == "" {
-				templateBody = selectedLabel
-			}
-			if templateBody != "" {
-				h.sendTemplateBody(chatID, lang, templateBody)
+				// Templates ➤ plugin doesn't expose bodies via createmeta —
+				// Jira fills in description server-side. Tell user, show body
+				// after creation (see handleCreateConfirm).
+				h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.template_selected", selectedLabel)))
 			}
 		}
 		h.states.Set(userID, "create_summary", data)
@@ -891,6 +881,19 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	msg.DisableWebPagePreview = true
 	h.sendMessage(msg)
+
+	// If the user picked a Templates ➤ option but supplied no description,
+	// Jira fills it server-side. Fetch and echo it now for tap-to-copy.
+	tplFieldID := data["template_field_id"]
+	userSuppliedDesc := strings.TrimSpace(data["description"]) != "" && data["desc_is_adf"] != "true"
+	if tplFieldID != "" && data["cf:"+tplFieldID] != "" && !userSuppliedDesc {
+		if issue, ferr := h.jiraAPI.GetIssue(ctx, user, resp.Key); ferr == nil && issue != nil {
+			body := strings.TrimSpace(issue.Fields.Description.ExtractText())
+			if body != "" {
+				h.sendTemplateBody(chatID, lang, body)
+			}
+		}
+	}
 }
 
 // isEpicRequiredError reports whether a Jira error message indicates the
