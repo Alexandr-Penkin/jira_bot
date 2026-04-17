@@ -644,35 +644,17 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			if avJSON := data["cfav:"+fieldID]; avJSON != "" {
 				_ = json.Unmarshal([]byte(avJSON), &values)
 			}
-			var selectedLabel, templateBody string
 			for _, v := range values {
 				if v.ID == valueID {
-					selectedLabel = v.Name
-					if selectedLabel == "" {
-						selectedLabel = v.Value
+					label := v.Name
+					if label == "" {
+						label = v.Value
 					}
-					// Prefer Value as the template body (often contains the
-					// long form), fall back to Name for plain select lists.
-					templateBody = v.Value
-					if templateBody == "" {
-						templateBody = v.Name
+					if label != "" {
+						data["cfval:"+fieldID] = label
 					}
 					break
 				}
-			}
-			if selectedLabel != "" {
-				data["cfval:"+fieldID] = selectedLabel
-			}
-			if templateBody != "" {
-				h.log.Debug().
-					Str("field_id", fieldID).
-					Str("value_id", valueID).
-					Int("body_len", len(templateBody)).
-					Msg("echoing template body")
-				header := htmlEscape(locale.T(lang, "create.template_copy_header"))
-				copyMsg := tgbotapi.NewMessage(chatID, header+"\n<pre>"+htmlEscape(templateBody)+"</pre>")
-				copyMsg.ParseMode = tgbotapi.ModeHTML
-				h.sendMessage(copyMsg)
 			}
 		}
 		h.states.Set(userID, "create_summary", data)
@@ -734,6 +716,11 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 		return
 	}
 
+	// Clear any description template carried over from a previous issue-type
+	// selection in the same session.
+	delete(data, "desc_template")
+	delete(data, "desc_template_raw")
+
 	// Extract description template and detect required Epic/parent field if present.
 	for i := range fields {
 		f := &fields[i]
@@ -793,6 +780,12 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 		}
 	}
 
+	// Echo the description default so the user can tap-to-copy the template
+	// body before typing anything. Fires once per issue-type selection.
+	if body := data["desc_template"]; body != "" {
+		h.sendTemplateBody(chatID, lang, body)
+	}
+
 	if templateFieldID != "" && data["cf:"+templateFieldID] == "" {
 		data["template_field_id"] = templateFieldID
 		h.createShowTemplateField(chatID, userID, data, lang)
@@ -801,6 +794,13 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 
 	h.states.Set(userID, "create_summary", data)
 	h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
+}
+
+func (h *Handler) sendTemplateBody(chatID int64, lang locale.Lang, body string) {
+	header := htmlEscape(locale.T(lang, "create.template_copy_header"))
+	msg := tgbotapi.NewMessage(chatID, header+"\n<pre>"+htmlEscape(body)+"</pre>")
+	msg.ParseMode = tgbotapi.ModeHTML
+	h.sendMessage(msg)
 }
 
 // isTemplateField heuristically detects the "Templates" custom field by name.
