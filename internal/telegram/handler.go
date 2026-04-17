@@ -744,6 +744,9 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	case "create_custom_field":
 		h.handleCreateCustomFieldInput(ctx, chatID, userID, text)
 
+	case "create_epic_key":
+		h.handleCreateEpicKeyInput(ctx, chatID, userID, text)
+
 	case "create_template_name":
 		h.handleCreateTemplateNameInput(ctx, chatID, userID, text)
 

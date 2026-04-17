@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ const (
 	maxDescriptionLen  = 10000
 	maxTemplateNameLen = 50
 	maxSelectOptions   = 30
+	maxEpicOptions     = 25
 )
 
 // --- Entry points ---
@@ -209,6 +211,21 @@ func (h *Handler) handleCreateCustomFieldInput(ctx context.Context, chatID, user
 	h.advanceToNextCustomField(ctx, chatID, userID, data, lang)
 }
 
+func (h *Handler) handleCreateEpicKeyInput(ctx context.Context, chatID, userID int64, text string) {
+	_, data := h.states.Get(userID)
+	lang := h.getLang(ctx, userID)
+
+	key := strings.ToUpper(strings.TrimSpace(text))
+	if !validateIssueKey(key) {
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.epic_key_invalid")))
+		return
+	}
+
+	data["epic_key"] = key
+	h.states.Set(userID, "create_cf_pending", data)
+	h.startCustomFields(ctx, chatID, userID, data, lang)
+}
+
 func (h *Handler) handleCreateTemplateNameInput(ctx context.Context, chatID, userID int64, text string) {
 	_, data := h.states.Get(userID)
 	lang := h.getLang(ctx, userID)
@@ -330,6 +347,73 @@ func (h *Handler) createShowAssigneeOptions(chatID, userID int64, data map[strin
 	h.sendMessage(msg)
 }
 
+// createMaybeAskEpic routes to the Epic picker step if Epic is required, otherwise skips to custom fields.
+func (h *Handler) createMaybeAskEpic(ctx context.Context, chatID, userID int64, data map[string]string, lang locale.Lang) {
+	if data["epic_required"] != "1" {
+		h.states.Set(userID, "create_cf_pending", data)
+		h.startCustomFields(ctx, chatID, userID, data, lang)
+		return
+	}
+	h.createShowEpicOptions(ctx, chatID, userID, data, lang)
+}
+
+// createShowEpicOptions fetches active Epics in the current project and presents them as buttons.
+func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int64, data map[string]string, lang locale.Lang) {
+	user, err := h.userRepo.GetByTelegramID(ctx, userID)
+	if err != nil || user == nil {
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
+		return
+	}
+
+	jql := fmt.Sprintf(`project = "%s" AND issuetype = Epic AND statusCategory != Done ORDER BY updated DESC`, data["project"])
+	result, err := h.jiraAPI.SearchIssues(ctx, user, jql, maxEpicOptions)
+	if err != nil {
+		h.log.Error().Err(err).Msg("failed to load epics")
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_epics")))
+		// Fall back to manual key entry.
+		h.states.Set(userID, "create_epic_key", data)
+		h.sendPrompt(chatID, locale.T(lang, "create.enter_epic_key"), lang)
+		return
+	}
+
+	// Clear any stale epic summary mappings from previous runs.
+	for k := range data {
+		if strings.HasPrefix(k, "epic_sum:") {
+			delete(data, k)
+		}
+	}
+
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(result.Issues)+2)
+	for _, issue := range result.Issues {
+		label := fmt.Sprintf("%s — %s", issue.Key, issue.Fields.Summary)
+		if len(label) > 50 {
+			label = label[:47] + "..."
+		}
+		data["epic_sum:"+issue.Key] = issue.Fields.Summary
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, "cr:epic:"+issue.Key),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "create.enter_epic_manual"), "cr:epic_manual"),
+	))
+	if data["epic_required"] != "1" {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.skip"), "cr:epic:skip"),
+		))
+	}
+
+	h.states.Set(userID, "create_epic_pending", data)
+
+	prompt := "create.choose_epic"
+	if len(result.Issues) == 0 {
+		prompt = "create.no_epics"
+	}
+	msg := tgbotapi.NewMessage(chatID, locale.T(lang, prompt))
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	h.sendMessage(msg)
+}
+
 func (h *Handler) createShowConfirmation(chatID, userID int64, data map[string]string, lang locale.Lang) {
 	h.states.Set(userID, "create_confirm_pending", data)
 
@@ -438,14 +522,12 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			}
 			data["assignee_id"] = user.JiraAccountID
 			data["assignee_name"] = user.JiraDisplayName
-			h.states.Set(userID, "create_cf_pending", data)
-			h.startCustomFields(ctx, chatID, userID, data, lang)
+			h.createMaybeAskEpic(ctx, chatID, userID, data, lang)
 		case "search":
 			h.states.Set(userID, "create_assignee_search", data)
 			h.sendPrompt(chatID, locale.T(lang, "create.search_assignee"), lang)
 		case "skip":
-			h.states.Set(userID, "create_cf_pending", data)
-			h.startCustomFields(ctx, chatID, userID, data, lang)
+			h.createMaybeAskEpic(ctx, chatID, userID, data, lang)
 		}
 
 	case "asgn_p":
@@ -465,8 +547,29 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 				}
 			}
 		}
+		h.createMaybeAskEpic(ctx, chatID, userID, data, lang)
+
+	case "epic":
+		if len(parts) < 3 {
+			return
+		}
+		if parts[2] == "skip" {
+			// Skip only allowed if epic not required; enforced by button visibility.
+			h.states.Set(userID, "create_cf_pending", data)
+			h.startCustomFields(ctx, chatID, userID, data, lang)
+			return
+		}
+		epicKey := parts[2]
+		data["epic_key"] = epicKey
+		if summary := data["epic_sum:"+epicKey]; summary != "" {
+			data["epic_summary"] = summary
+		}
 		h.states.Set(userID, "create_cf_pending", data)
 		h.startCustomFields(ctx, chatID, userID, data, lang)
+
+	case "epic_manual":
+		h.states.Set(userID, "create_epic_key", data)
+		h.sendPrompt(chatID, locale.T(lang, "create.enter_epic_key"), lang)
 
 	case "cf":
 		if len(parts) < 4 {
@@ -524,7 +627,7 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 		return
 	}
 
-	// Extract description template if present.
+	// Extract description template and detect required Epic/parent field if present.
 	for i := range fields {
 		f := &fields[i]
 		if f.Key == "description" && f.HasDefaultValue && len(f.DefaultValue) > 0 {
@@ -535,6 +638,18 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 					data["desc_template"] = extracted
 					data["desc_template_raw"] = string(f.DefaultValue)
 				}
+			}
+		}
+		if f.Required {
+			// Team-managed project: parent points to the Epic for Task/Story.
+			if f.Key == "parent" && !strings.EqualFold(data["issue_type_name"], "Epic") {
+				data["epic_required"] = "1"
+				data["epic_field_id"] = "parent"
+			}
+			// Classic project: Epic Link is a custom field.
+			if f.Schema.Custom == "com.pyxis.greenhopper.jira:gh-epic-link" {
+				data["epic_required"] = "1"
+				data["epic_field_id"] = f.FieldID
 			}
 		}
 	}
@@ -576,7 +691,11 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	resp, err := h.jiraAPI.CreateIssue(ctx, user, payload)
 	if err != nil {
 		h.log.Error().Err(err).Msg("failed to create issue")
-		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
+		if detail := extractJiraErrorDetail(err); detail != "" {
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_detail", detail)))
+		} else {
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
+		}
 		return
 	}
 
@@ -587,6 +706,27 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	msg.DisableWebPagePreview = true
 	h.sendMessage(msg)
+}
+
+// extractJiraErrorDetail returns a human-readable summary from a Jira 4xx error
+// body (errorMessages + errors map) — empty if the error isn't an HTTPError.
+func extractJiraErrorDetail(err error) string {
+	var httpErr *jira.HTTPError
+	if !errors.As(err, &httpErr) {
+		return ""
+	}
+	var body struct {
+		ErrorMessages []string          `json:"errorMessages"`
+		Errors        map[string]string `json:"errors"`
+	}
+	if jsonErr := json.Unmarshal([]byte(httpErr.Body), &body); jsonErr != nil {
+		return ""
+	}
+	parts := append([]string(nil), body.ErrorMessages...)
+	for field, msg := range body.Errors {
+		parts = append(parts, fmt.Sprintf("%s: %s", field, msg))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // --- Custom field iteration ---
@@ -818,6 +958,9 @@ func (h *Handler) handleCreateQuick(ctx context.Context, chatID, _ int64, user *
 	resp, err := h.jiraAPI.CreateIssue(ctx, user, fields)
 	if err != nil {
 		h.log.Error().Err(err).Msg("quick create: failed to create issue")
+		if detail := extractJiraErrorDetail(err); detail != "" {
+			return tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_detail", detail))
+		}
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed"))
 	}
 
@@ -856,6 +999,15 @@ func buildCreatePayload(data map[string]string) map[string]interface{} {
 
 	if assigneeID := data["assignee_id"]; assigneeID != "" {
 		fields["assignee"] = map[string]string{"accountId": assigneeID}
+	}
+
+	if epicKey := data["epic_key"]; epicKey != "" {
+		switch fieldID := data["epic_field_id"]; fieldID {
+		case "parent", "":
+			fields["parent"] = map[string]string{"key": epicKey}
+		default:
+			fields[fieldID] = epicKey
+		}
 	}
 
 	// Custom fields.
@@ -937,6 +1089,16 @@ func (h *Handler) buildCreateConfirmation(data map[string]string, lang locale.La
 	if name := data["assignee_name"]; name != "" {
 		sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_assignee")) + ":* ")
 		sb.WriteString(format.EscapeMarkdown(name))
+		sb.WriteString("\n")
+	}
+
+	if epicKey := data["epic_key"]; epicKey != "" {
+		sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_epic")) + ":* ")
+		sb.WriteString(format.EscapeMarkdown(epicKey))
+		if summary := data["epic_summary"]; summary != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(format.EscapeMarkdown(summary))
+		}
 		sb.WriteString("\n")
 	}
 
