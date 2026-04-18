@@ -97,35 +97,58 @@ type Config struct {
 	// fine for a single replica. Default false preserves current
 	// behaviour.
 	PersistConversationStates bool
+
+	// Phase 7a: OpenTelemetry bootstrap. When OtelExporterEndpoint is
+	// non-empty, services install an OTLP/gRPC tracer provider with the
+	// given endpoint (e.g. "otel-collector:4317"). Empty disables the
+	// SDK entirely — a no-op TracerProvider is installed so
+	// `otel.Tracer(...)` calls are safe and allocation-free. OtelServiceName
+	// overrides the default service.name resource attribute (each cmd
+	// supplies its own default).
+	OtelExporterEndpoint string
+	OtelServiceName      string
+	OtelExporterInsecure bool
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		TelegramToken:      os.Getenv("TELEGRAM_TOKEN"),
-		MongoURI:           getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017"),
-		MongoDB:            getEnvOrDefault("MONGO_DB", "sleepjirabot"),
-		LogLevel:           getEnvOrDefault("LOG_LEVEL", "info"),
-		JiraClientID:       os.Getenv("JIRA_CLIENT_ID"),
-		JiraClientSecret:   os.Getenv("JIRA_CLIENT_SECRET"),
-		JiraRedirectURI:    getEnvOrDefault("JIRA_REDIRECT_URI", "http://localhost:8080/callback"),
-		PollInterval:       getEnvOrDefault("POLL_INTERVAL", "30s"),
-		BatchWindow:        getEnvOrDefault("BATCH_WINDOW", "1m"),
-		CallbackAddr:       getEnvOrDefault("CALLBACK_ADDR", ":8080"),
-		EncryptionKey:      os.Getenv("ENCRYPTION_KEY"),
-		JiraWebhookSecret:  os.Getenv("JIRA_WEBHOOK_SECRET"),
-		ProxyURL:           os.Getenv("PROXY_URL"),
-		NatsURL:            getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
-		EmbedWebhookServer: true,
-		WebhookSvcAddr:     getEnvOrDefault("WEBHOOK_SVC_ADDR", ":8081"),
-		InternalAddr:       getEnvOrDefault("INTERNAL_ADDR", ":9080"),
-		InternalAuthToken:  os.Getenv("INTERNAL_AUTH_TOKEN"),
-		IdentitySvcURL:     os.Getenv("IDENTITY_SVC_URL"),
-		EmbedPoller:        true,
-		EmbedScheduler:     true,
-		EmbedPreferences:   true,
-		PreferencesSvcURL:  os.Getenv("PREFERENCES_SVC_URL"),
-		PreferencesSvcAddr: getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
-		DedupRedisURL:      os.Getenv("DEDUP_REDIS_URL"),
+		TelegramToken:        os.Getenv("TELEGRAM_TOKEN"),
+		MongoURI:             getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017"),
+		MongoDB:              getEnvOrDefault("MONGO_DB", "sleepjirabot"),
+		LogLevel:             getEnvOrDefault("LOG_LEVEL", "info"),
+		JiraClientID:         os.Getenv("JIRA_CLIENT_ID"),
+		JiraClientSecret:     os.Getenv("JIRA_CLIENT_SECRET"),
+		JiraRedirectURI:      getEnvOrDefault("JIRA_REDIRECT_URI", "http://localhost:8080/callback"),
+		PollInterval:         getEnvOrDefault("POLL_INTERVAL", "30s"),
+		BatchWindow:          getEnvOrDefault("BATCH_WINDOW", "1m"),
+		CallbackAddr:         getEnvOrDefault("CALLBACK_ADDR", ":8080"),
+		EncryptionKey:        os.Getenv("ENCRYPTION_KEY"),
+		JiraWebhookSecret:    os.Getenv("JIRA_WEBHOOK_SECRET"),
+		ProxyURL:             os.Getenv("PROXY_URL"),
+		NatsURL:              getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
+		EmbedWebhookServer:   true,
+		WebhookSvcAddr:       getEnvOrDefault("WEBHOOK_SVC_ADDR", ":8081"),
+		InternalAddr:         getEnvOrDefault("INTERNAL_ADDR", ":9080"),
+		InternalAuthToken:    os.Getenv("INTERNAL_AUTH_TOKEN"),
+		IdentitySvcURL:       os.Getenv("IDENTITY_SVC_URL"),
+		EmbedPoller:          true,
+		EmbedScheduler:       true,
+		EmbedPreferences:     true,
+		PreferencesSvcURL:    os.Getenv("PREFERENCES_SVC_URL"),
+		PreferencesSvcAddr:   getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
+		DedupRedisURL:        os.Getenv("DEDUP_REDIS_URL"),
+		OtelExporterEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OtelServiceName:      os.Getenv("OTEL_SERVICE_NAME"),
+	}
+
+	if v := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); v != "" {
+		insecure, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("OTEL_EXPORTER_OTLP_INSECURE must be a boolean (true/false/1/0)")
+		}
+		cfg.OtelExporterInsecure = insecure
+	} else {
+		cfg.OtelExporterInsecure = true
 	}
 
 	if v := os.Getenv("ENABLE_EVENT_PUBLISH"); v != "" {

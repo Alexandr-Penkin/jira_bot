@@ -31,6 +31,7 @@ import (
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
 	"SleepJiraBot/pkg/preferencesclient"
+	"SleepJiraBot/pkg/telemetry"
 	"SleepJiraBot/web"
 )
 
@@ -54,6 +55,25 @@ func main() {
 		sig := <-sigCh
 		log.Info().Str("signal", sig.String()).Msg("received shutdown signal")
 		cancel()
+	}()
+
+	otelShutdown, err := telemetry.Init(ctx, telemetry.Config{
+		Service:  "sjb-bot",
+		Override: cfg.OtelServiceName,
+		Endpoint: cfg.OtelExporterEndpoint,
+		Insecure: cfg.OtelExporterInsecure,
+	}, log)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to init OpenTelemetry")
+		cancel()
+		return
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			log.Warn().Err(err).Msg("OpenTelemetry shutdown error")
+		}
 	}()
 
 	mongo, err := storage.ConnectMongo(ctx, cfg.MongoURI, cfg.MongoDB, log)

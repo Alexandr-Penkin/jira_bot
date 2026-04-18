@@ -34,6 +34,7 @@ import (
 	"SleepJiraBot/internal/proxy"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/telemetry"
 )
 
 const (
@@ -72,6 +73,24 @@ func main() {
 		sig := <-sigCh
 		log.Info().Str("signal", sig.String()).Msg("received shutdown signal")
 		cancel()
+	}()
+
+	otelShutdown, err := telemetry.Init(ctx, telemetry.Config{
+		Service:  "sjb-telegram-svc",
+		Override: cfg.OtelServiceName,
+		Endpoint: cfg.OtelExporterEndpoint,
+		Insecure: cfg.OtelExporterInsecure,
+	}, log)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to init OpenTelemetry")
+		return
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			log.Warn().Err(err).Msg("OpenTelemetry shutdown error")
+		}
 	}()
 
 	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 90*time.Second)
