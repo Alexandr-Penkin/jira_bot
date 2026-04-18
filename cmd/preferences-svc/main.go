@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
@@ -129,7 +130,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.PreferencesSvcAddr,
-		Handler:           server.Handler(),
+		Handler:           otelhttp.NewHandler(server.Handler(), "preferences-svc"),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

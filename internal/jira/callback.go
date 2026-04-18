@@ -12,6 +12,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/locale"
@@ -65,7 +66,7 @@ func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, use
 
 	cs.server = &http.Server{
 		Addr:              addr,
-		Handler:           cs.mux,
+		Handler:           otelhttp.NewHandler(cs.mux, "bot.callback"),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,

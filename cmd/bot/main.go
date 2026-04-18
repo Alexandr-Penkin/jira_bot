@@ -13,6 +13,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
@@ -193,7 +194,7 @@ func main() {
 	identityServer := identity.NewServer(identityProvider, cfg.InternalAuthToken, log)
 	internalSrv := &http.Server{
 		Addr:              cfg.InternalAddr,
-		Handler:           identityServer.Handler(),
+		Handler:           otelhttp.NewHandler(identityServer.Handler(), "bot.internal-lease"),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	if cfg.InternalAuthToken == "" {

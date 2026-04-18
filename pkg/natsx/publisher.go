@@ -14,9 +14,15 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	"go.opentelemetry.io/otel/trace"
 
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
+
+var tracer = otel.Tracer("SleepJiraBot/pkg/natsx")
 
 // JetStreamPublisher publishes envelope-wrapped events with the event's
 // idempotency key as the Nats-Msg-Id header, letting JetStream dedupe
@@ -119,10 +125,26 @@ func (p *JetStreamPublisher) EnsureStreams(streams []StreamConfig) error {
 }
 
 // Publish marshals the event into an Envelope and publishes it with its
-// idempotency key as the Nats-Msg-Id header.
+// idempotency key as the Nats-Msg-Id header. A producer span is started
+// around the publish call and the active W3C trace context is injected
+// into the outgoing NATS headers so consumers downstream (telegram-svc
+// et al.) can continue the trace via ExtractContext.
 func (p *JetStreamPublisher) Publish(ctx context.Context, event eventsv1.Event, traceID string) error {
+	ctx, span := tracer.Start(ctx, "natsx.publish "+event.Subject(),
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			semconv.MessagingSystemKey.String("nats"),
+			semconv.MessagingDestinationName(event.Subject()),
+			semconv.MessagingOperationTypePublish,
+			semconv.MessagingMessageID(event.IdempotencyKey()),
+		),
+	)
+	defer span.End()
+
 	data, err := eventsv1.Marshal(event, traceID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "marshal failed")
 		return fmt.Errorf("natsx: marshal %s: %w", event.Subject(), err)
 	}
 	msg := &nats.Msg{
@@ -131,14 +153,18 @@ func (p *JetStreamPublisher) Publish(ctx context.Context, event eventsv1.Event, 
 		Header:  nats.Header{},
 	}
 	msg.Header.Set(nats.MsgIdHdr, event.IdempotencyKey())
-	if traceID != "" {
-		msg.Header.Set("traceparent", traceID)
-	}
+	// Inject the active span context as W3C traceparent/tracestate.
+	// When OTel is disabled the global propagator is still installed
+	// (TextMapPropagator is always non-nil after telemetry.Init) but
+	// emits nothing for a non-recording span — safe no-op.
+	otel.GetTextMapPropagator().Inject(ctx, HeaderCarrier(msg.Header))
 
 	// We use the async publisher so slow NATS latency cannot block
 	// primary request paths. The ack is observed in the background.
 	fut, err := p.js.PublishMsgAsync(msg)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "publish failed")
 		return fmt.Errorf("natsx: publish %s: %w", event.Subject(), err)
 	}
 	go func() {

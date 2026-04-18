@@ -28,6 +28,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/logger"
@@ -36,6 +39,8 @@ import (
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/telemetry"
 )
+
+var tracer = otel.Tracer("SleepJiraBot/cmd/telegram-svc")
 
 const (
 	fetchBatch   = 10
@@ -184,19 +189,31 @@ func runConsumer(ctx context.Context, sub *nats.Subscription, tgAPI *tgbotapi.Bo
 }
 
 func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, pub eventsv1.Publisher, log zerolog.Logger) {
+	ctx = natsx.ExtractContext(ctx, msg)
+	ctx, span := tracer.Start(ctx, "telegram-svc.deliver "+msg.Subject,
+		natsx.ConsumerAttrs(msg.Subject)...,
+	)
+	defer span.End()
+
 	var env eventsv1.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "malformed envelope")
 		log.Error().Err(err).Msg("telegram-svc: malformed envelope; terminating message")
 		_ = msg.Term()
 		return
 	}
 	var req eventsv1.NotifyRequested
 	if err := json.Unmarshal(env.Payload, &req); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "malformed payload")
 		log.Error().Err(err).Msg("telegram-svc: malformed NotifyRequested payload; terminating message")
 		_ = msg.Term()
 		return
 	}
+	span.SetAttributes(semconv.MessagingMessageID(env.ID))
 	if req.ChatID == 0 || req.Text == "" {
+		span.SetStatus(codes.Error, "empty notification")
 		log.Warn().Int64("chat_id", req.ChatID).Msg("telegram-svc: rejecting empty notification")
 		_ = msg.Term()
 		return
@@ -210,6 +227,8 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 
 	sent, err := tgAPI.Send(tg)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "telegram send failed")
 		log.Error().Err(err).Int64("chat_id", req.ChatID).Str("reason", req.Reason).Msg("telegram-svc: Telegram send failed; will retry")
 		_ = pub.Publish(ctx, eventsv1.NotifyFailed{
 			ChatID:     req.ChatID,
