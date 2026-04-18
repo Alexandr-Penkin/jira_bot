@@ -164,8 +164,15 @@ func (r *UserRepo) SetLanguage(ctx context.Context, telegramUserID int64, lang s
 		},
 	}
 	opts := options.UpdateOne().SetUpsert(true)
-	_, err := r.coll.UpdateOne(ctx, filter, update, opts)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update, opts); err != nil {
+		return err
+	}
+	_ = r.pub.Publish(ctx, eventsv1.LanguageChanged{
+		TelegramID: telegramUserID,
+		Language:   lang,
+		At:         now,
+	}, "")
+	return nil
 }
 
 func (r *UserRepo) SetDefaults(ctx context.Context, telegramUserID int64, project string, boardID int) error {
@@ -177,8 +184,11 @@ func (r *UserRepo) SetDefaults(ctx context.Context, telegramUserID int64, projec
 			"modified_ts":      time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
 }
 
 func (r *UserRepo) SetSprintIssueTypes(ctx context.Context, telegramUserID int64, issueTypes []string) error {
@@ -189,8 +199,11 @@ func (r *UserRepo) SetSprintIssueTypes(ctx context.Context, telegramUserID int64
 			"modified_ts":        time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
 }
 
 func (r *UserRepo) SetDoneStatuses(ctx context.Context, telegramUserID int64, statuses []string) error {
@@ -201,8 +214,11 @@ func (r *UserRepo) SetDoneStatuses(ctx context.Context, telegramUserID int64, st
 			"modified_ts":   time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
 }
 
 func (r *UserRepo) SetHoldStatuses(ctx context.Context, telegramUserID int64, statuses []string) error {
@@ -213,8 +229,11 @@ func (r *UserRepo) SetHoldStatuses(ctx context.Context, telegramUserID int64, st
 			"modified_ts":   time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
 }
 
 func (r *UserRepo) SetAssigneeField(ctx context.Context, telegramUserID int64, fieldID string) error {
@@ -225,8 +244,11 @@ func (r *UserRepo) SetAssigneeField(ctx context.Context, telegramUserID int64, f
 			"modified_ts":       time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
 }
 
 func (r *UserRepo) SetStoryPointsField(ctx context.Context, telegramUserID int64, fieldID string) error {
@@ -237,8 +259,11 @@ func (r *UserRepo) SetStoryPointsField(ctx context.Context, telegramUserID int64
 			"modified_ts":           time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
 }
 
 // GetByJiraAccountIDs returns users matching the given Jira account IDs.
@@ -278,8 +303,36 @@ func (r *UserRepo) SetDailyJQL(ctx context.Context, telegramUserID int64, doneJQ
 			"modified_ts":     time.Now().Unix(),
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
+}
+
+// publishDefaultsChanged reads back the user and publishes a full
+// snapshot DefaultsChanged event. Read-after-write is acceptable —
+// preference setters are not on the message hot path. If the read fails
+// the event is dropped (better than publishing a partial snapshot).
+func (r *UserRepo) publishDefaultsChanged(ctx context.Context, telegramUserID int64) {
+	var u User
+	if err := r.coll.FindOne(ctx, bson.M{"telegram_user_id": telegramUserID}).Decode(&u); err != nil {
+		return
+	}
+	_ = r.pub.Publish(ctx, &eventsv1.DefaultsChanged{
+		TelegramID:         telegramUserID,
+		DefaultProject:     u.DefaultProject,
+		DefaultBoardID:     u.DefaultBoardID,
+		SprintIssueTypes:   u.SprintIssueTypes,
+		AssigneeFieldID:    u.AssigneeFieldID,
+		StoryPointsFieldID: u.StoryPointsFieldID,
+		DoneStatuses:       u.DoneStatuses,
+		HoldStatuses:       u.HoldStatuses,
+		DailyDoneJQL:       u.DailyDoneJQL,
+		DailyDoingJQL:      u.DailyDoingJQL,
+		DailyPlanJQL:       u.DailyPlanJQL,
+		At:                 time.Now().Unix(),
+	}, "")
 }
 
 func (r *UserRepo) DeleteByTelegramID(ctx context.Context, telegramUserID int64) error {

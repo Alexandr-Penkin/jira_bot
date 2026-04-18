@@ -151,6 +151,40 @@ services:
       retries: 3
       start_period: 10s
 
+  # Phase 5: standalone user-preferences storage. Enable with
+  # `docker compose --profile preferences-svc up`. Set
+  # EMBED_PREFERENCES=false and PREFERENCES_SVC_URL=http://preferences-svc:9082
+  # on the bot to offload preferences resolution. Event emission lives
+  # in UserRepo, so whichever process writes fires the event — running
+  # both co-resident does not double-publish.
+  preferences-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/preferences-svc
+    profiles: ["preferences-svc"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      PREFERENCES_SVC_ADDR: ":9082"
+      ENABLE_EVENT_PUBLISH: "true"
+    ports:
+      - "9082:9082"
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - default
+      - mongo_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   nats:
     image: nats:2.10-alpine
     restart: unless-stopped

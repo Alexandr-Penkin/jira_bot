@@ -59,6 +59,20 @@ type Config struct {
 	// Phase 4: EmbedScheduler controls whether the monolith runs its
 	// cron scheduler. Set false when scheduler-svc takes over.
 	EmbedScheduler bool
+
+	// Phase 5: EmbedPreferences controls whether the monolith resolves
+	// user preferences in process (embedded LocalProvider over UserRepo)
+	// or offloads to a standalone preferences-svc over HTTP. Default
+	// true preserves current behaviour.
+	EmbedPreferences bool
+
+	// PreferencesSvcURL, when set, directs monolith consumers to call an
+	// external preferences-svc over HTTP instead of resolving preferences
+	// in process. Empty keeps the embedded path.
+	PreferencesSvcURL string
+
+	// PreferencesSvcAddr is consulted only by cmd/preferences-svc.
+	PreferencesSvcAddr string
 }
 
 func Load() (*Config, error) {
@@ -84,6 +98,9 @@ func Load() (*Config, error) {
 		IdentitySvcURL:     os.Getenv("IDENTITY_SVC_URL"),
 		EmbedPoller:        true,
 		EmbedScheduler:     true,
+		EmbedPreferences:   true,
+		PreferencesSvcURL:  os.Getenv("PREFERENCES_SVC_URL"),
+		PreferencesSvcAddr: getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
 	}
 
 	if v := os.Getenv("ENABLE_EVENT_PUBLISH"); v != "" {
@@ -116,6 +133,14 @@ func Load() (*Config, error) {
 			return nil, errors.New("EMBED_SCHEDULER must be a boolean (true/false/1/0)")
 		}
 		cfg.EmbedScheduler = enabled
+	}
+
+	if v := os.Getenv("EMBED_PREFERENCES"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("EMBED_PREFERENCES must be a boolean (true/false/1/0)")
+		}
+		cfg.EmbedPreferences = enabled
 	}
 
 	if cfg.TelegramToken == "" {
