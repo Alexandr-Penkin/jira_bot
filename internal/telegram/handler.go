@@ -18,6 +18,7 @@ import (
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/poller"
+	"SleepJiraBot/internal/preferences"
 	"SleepJiraBot/internal/storage"
 )
 
@@ -41,6 +42,7 @@ type Handler struct {
 	jiraAPI          *jira.Client
 	callbackServer   *jira.CallbackServer
 	userRepo         *storage.UserRepo
+	prefs            preferences.Provider
 	subRepo          *storage.SubscriptionRepo
 	scheduleRepo     *storage.ScheduleRepo
 	webhookMgr       *jira.WebhookManager
@@ -62,12 +64,13 @@ func (h *Handler) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int
 	h.webhookEvents = eventsFn
 }
 
-func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, prefs preferences.Provider, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64) *Handler {
 	return &Handler{
 		api:          api,
 		oauth:        oauth,
 		jiraAPI:      jiraAPI,
 		userRepo:     userRepo,
+		prefs:        prefs,
 		subRepo:      subRepo,
 		scheduleRepo: scheduleRepo,
 		webhookMgr:   webhookMgr,
@@ -80,6 +83,13 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 
 func (h *Handler) SetCallbackServer(cs *jira.CallbackServer) {
 	h.callbackServer = cs
+}
+
+// useStateStore swaps the FSM backend on the handler's state manager.
+// Exposed through Bot.UseMongoStateStore; the stateStore interface is
+// package-private so callers cannot hand-roll their own backend.
+func (h *Handler) useStateStore(store stateStore) {
+	h.states = newStateManagerWithStore(store)
 }
 
 func (h *Handler) SetOnScheduleChange(fn func()) {
@@ -451,7 +461,7 @@ func (h *Handler) handleMenuCallback(ctx context.Context, cq *tgbotapi.CallbackQ
 
 func (h *Handler) handleLangCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, langCode string) {
 	lang := locale.FromString(langCode)
-	if err := h.userRepo.SetLanguage(ctx, cq.From.ID, string(lang)); err != nil {
+	if err := h.prefs.SetLanguage(ctx, cq.From.ID, string(lang)); err != nil {
 		h.log.Error().Err(err).Msg("failed to set language")
 	}
 
@@ -658,7 +668,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	case "defaults_project":
 		h.states.Clear(userID)
 		if text == "-" {
-			if err := h.userRepo.SetDefaults(ctx, userID, "", 0); err != nil {
+			if err := h.prefs.SetDefaults(ctx, userID, "", 0); err != nil {
 				h.log.Error().Err(err).Msg("failed to clear defaults")
 			}
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "defaults.cleared")))

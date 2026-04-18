@@ -67,7 +67,7 @@ func (h *Handler) handleStoryPointsFieldStart(ctx context.Context, chatID, userI
 
 // handleStoryPointsFieldCallback handles sp_select callbacks.
 func (h *Handler) handleStoryPointsFieldCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
-	h.handleFieldSelectCallback(ctx, cq, parts, h.userRepo.SetStoryPointsField, "spfield.saved", "failed to save story points field")
+	h.handleFieldSelectCallback(ctx, cq, parts, h.prefs.SetStoryPointsField, "spfield.saved", "failed to save story points field")
 }
 
 // handleStoryPointsFieldReset resets the story points field to default.
@@ -78,7 +78,7 @@ func (h *Handler) handleStoryPointsFieldReset(ctx context.Context, cq *tgbotapi.
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	if err := h.userRepo.SetStoryPointsField(ctx, userID, ""); err != nil {
+	if err := h.prefs.SetStoryPointsField(ctx, userID, ""); err != nil {
 		h.log.Error().Err(err).Msg("failed to clear story points field")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return

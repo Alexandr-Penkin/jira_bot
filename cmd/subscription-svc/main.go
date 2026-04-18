@@ -152,7 +152,26 @@ func main() {
 
 	pollInterval := mustDuration(cfg.PollInterval, 30*time.Second)
 	batchWindow := mustDuration(cfg.BatchWindow, time.Minute)
-	dedup := notifydedup.New(3 * batchWindow)
+
+	var dedup notifydedup.Allower
+	if cfg.DedupRedisURL != "" {
+		rg, err := notifydedup.NewRedis(cfg.DedupRedisURL, 3*batchWindow, log)
+		if err != nil {
+			log.Error().Err(err).Msg("subscription-svc: failed to construct redis dedup")
+			return
+		}
+		if err := rg.Ping(ctx); err != nil {
+			log.Error().Err(err).Msg("subscription-svc: redis dedup ping failed")
+			return
+		}
+		defer func() { _ = rg.Close() }()
+		dedup = rg
+		log.Info().Msg("notifydedup: using redis backend")
+	} else {
+		memDedup := notifydedup.New(3 * batchWindow)
+		defer memDedup.Stop()
+		dedup = memDedup
+	}
 
 	issuePoller := poller.New(subRepo, userRepo, jiraClient, tgAPI, log, pollInterval, batchWindow, dedup)
 	issuePoller.SetEventPublisher(eventPub)

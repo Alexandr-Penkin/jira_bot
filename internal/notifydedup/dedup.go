@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// Allower is the surface consumers need. The in-process Guard is the
+// original impl; RedisGuard (redis.go) shares state across replicas so
+// multi-replica subscription-svc + webhook-svc do not double-notify.
+type Allower interface {
+	Allow(chatID int64, issueKey string) bool
+}
+
 // Guard prevents the same notification (chatID + issueKey) from being
 // sent more than once within a configurable time window. It is safe for
 // concurrent use by both the poller and webhook goroutines.

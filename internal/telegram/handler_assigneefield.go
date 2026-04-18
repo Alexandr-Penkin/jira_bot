@@ -113,7 +113,7 @@ func (h *Handler) handleAssigneeFieldStart(ctx context.Context, chatID, userID i
 
 // handleAssigneeFieldCallback handles af_select and af_reset callbacks.
 func (h *Handler) handleAssigneeFieldCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
-	h.handleFieldSelectCallback(ctx, cq, parts, h.userRepo.SetAssigneeField, "assigneefield.saved", "failed to save assignee field")
+	h.handleFieldSelectCallback(ctx, cq, parts, h.prefs.SetAssigneeField, "assigneefield.saved", "failed to save assignee field")
 }
 
 // handleAssigneeFieldReset resets the assignee field to default.
@@ -124,7 +124,7 @@ func (h *Handler) handleAssigneeFieldReset(ctx context.Context, cq *tgbotapi.Cal
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	if err := h.userRepo.SetAssigneeField(ctx, userID, ""); err != nil {
+	if err := h.prefs.SetAssigneeField(ctx, userID, ""); err != nil {
 		h.log.Error().Err(err).Msg("failed to clear assignee field")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return

@@ -7,11 +7,13 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/rs/zerolog"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	"net/http"
 
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/poller"
+	"SleepJiraBot/internal/preferences"
 	"SleepJiraBot/internal/storage"
 )
 
@@ -25,7 +27,7 @@ type Bot struct {
 	log     zerolog.Logger
 }
 
-func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64, httpClient *http.Client) (*Bot, error) {
+func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, userRepo *storage.UserRepo, prefs preferences.Provider, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64, httpClient *http.Client) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
@@ -35,7 +37,7 @@ func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, user
 
 	return &Bot{
 		api:     api,
-		handler: NewHandler(api, oauth, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, templateRepo, log, adminID),
+		handler: NewHandler(api, oauth, jiraClient, userRepo, prefs, subRepo, scheduleRepo, webhookMgr, templateRepo, log, adminID),
 		log:     log,
 	}, nil
 }
@@ -58,6 +60,18 @@ func (b *Bot) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int64) 
 
 func (b *Bot) SetOnScheduleChange(fn func()) {
 	b.handler.SetOnScheduleChange(fn)
+}
+
+// UseMongoStateStore swaps the default in-memory FSM store for a
+// Mongo-backed one so conversation progress survives process restarts.
+// Opt-in via PERSIST_CONVERSATION_STATES; must be called before Start.
+func (b *Bot) UseMongoStateStore(ctx context.Context, db *mongo.Database, log zerolog.Logger) error {
+	store, err := NewMongoStateStore(ctx, db, log)
+	if err != nil {
+		return err
+	}
+	b.handler.useStateStore(store)
+	return nil
 }
 
 func (b *Bot) Start(ctx context.Context) {

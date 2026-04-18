@@ -176,9 +176,9 @@ func (h *Handler) handleStatusSave(ctx context.Context, cq *tgbotapi.CallbackQue
 
 	var saveErr error
 	if kind == statusKindDone {
-		saveErr = h.userRepo.SetDoneStatuses(ctx, userID, selected)
+		saveErr = h.prefs.SetDoneStatuses(ctx, userID, selected)
 	} else {
-		saveErr = h.userRepo.SetHoldStatuses(ctx, userID, selected)
+		saveErr = h.prefs.SetHoldStatuses(ctx, userID, selected)
 	}
 
 	if saveErr != nil {
@@ -216,9 +216,9 @@ func (h *Handler) handleStatusClear(ctx context.Context, cq *tgbotapi.CallbackQu
 
 	var saveErr error
 	if kind == statusKindDone {
-		saveErr = h.userRepo.SetDoneStatuses(ctx, userID, nil)
+		saveErr = h.prefs.SetDoneStatuses(ctx, userID, nil)
 	} else {
-		saveErr = h.userRepo.SetHoldStatuses(ctx, userID, nil)
+		saveErr = h.prefs.SetHoldStatuses(ctx, userID, nil)
 	}
 
 	if saveErr != nil {

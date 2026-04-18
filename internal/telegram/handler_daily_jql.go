@@ -98,7 +98,7 @@ func (h *Handler) handleDailyJQLSave(ctx context.Context, chatID, userID int64, 
 		planJQL = jql
 	}
 
-	if err := h.userRepo.SetDailyJQL(ctx, userID, doneJQL, doingJQL, planJQL); err != nil {
+	if err := h.prefs.SetDailyJQL(ctx, userID, doneJQL, doingJQL, planJQL); err != nil {
 		h.log.Error().Err(err).Msg("failed to save daily JQL")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return
@@ -113,7 +113,7 @@ func (h *Handler) handleDailyJQLReset(ctx context.Context, cq *tgbotapi.Callback
 	chatID := cq.Message.Chat.ID
 	lang := h.getLang(ctx, userID)
 
-	if err := h.userRepo.SetDailyJQL(ctx, userID, "", "", ""); err != nil {
+	if err := h.prefs.SetDailyJQL(ctx, userID, "", "", ""); err != nil {
 		h.log.Error().Err(err).Msg("failed to reset daily JQL")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return

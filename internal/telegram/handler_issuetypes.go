@@ -142,7 +142,7 @@ func (h *Handler) handleIssueTypeSave(ctx context.Context, cq *tgbotapi.Callback
 
 	h.states.Clear(userID)
 
-	if err := h.userRepo.SetSprintIssueTypes(ctx, userID, selected); err != nil {
+	if err := h.prefs.SetSprintIssueTypes(ctx, userID, selected); err != nil {
 		h.log.Error().Err(err).Msg("failed to save sprint issue types")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return
@@ -175,7 +175,7 @@ func (h *Handler) handleIssueTypeClear(ctx context.Context, cq *tgbotapi.Callbac
 
 	h.states.Clear(userID)
 
-	if err := h.userRepo.SetSprintIssueTypes(ctx, userID, nil); err != nil {
+	if err := h.prefs.SetSprintIssueTypes(ctx, userID, nil); err != nil {
 		h.log.Error().Err(err).Msg("failed to clear sprint issue types")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic")))
 		return

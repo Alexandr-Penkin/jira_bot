@@ -185,6 +185,24 @@ services:
       retries: 3
       start_period: 10s
 
+  # Shared Redis for distributed notifydedup. Enable with
+  # `docker compose --profile redis up`. When DEDUP_REDIS_URL is set,
+  # subscription-svc / webhook-svc / bot all SETNX-coordinate through
+  # it and multi-replica deploys stop double-notifying.
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   nats:
     image: nats:2.10-alpine
     restart: unless-stopped

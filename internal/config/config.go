@@ -73,6 +73,21 @@ type Config struct {
 
 	// PreferencesSvcAddr is consulted only by cmd/preferences-svc.
 	PreferencesSvcAddr string
+
+	// DedupRedisURL, when set, points notifydedup at a Redis instance
+	// instead of the in-process Guard. Use when running subscription-svc
+	// or webhook-svc with more than one replica — in-memory dedup is
+	// per-process and will allow a duplicate storm. Format:
+	// redis://user:pass@host:port/db.
+	DedupRedisURL string
+
+	// Phase 6 prep: PersistConversationStates swaps the Telegram FSM's
+	// default in-memory store for a Mongo-backed one (collection
+	// conversation_states, TTL-expired). Opt-in for two reasons — Mongo
+	// round-trips per update add ~1ms, and the in-memory path is still
+	// fine for a single replica. Default false preserves current
+	// behaviour.
+	PersistConversationStates bool
 }
 
 func Load() (*Config, error) {
@@ -101,6 +116,7 @@ func Load() (*Config, error) {
 		EmbedPreferences:   true,
 		PreferencesSvcURL:  os.Getenv("PREFERENCES_SVC_URL"),
 		PreferencesSvcAddr: getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
+		DedupRedisURL:      os.Getenv("DEDUP_REDIS_URL"),
 	}
 
 	if v := os.Getenv("ENABLE_EVENT_PUBLISH"); v != "" {
@@ -141,6 +157,14 @@ func Load() (*Config, error) {
 			return nil, errors.New("EMBED_PREFERENCES must be a boolean (true/false/1/0)")
 		}
 		cfg.EmbedPreferences = enabled
+	}
+
+	if v := os.Getenv("PERSIST_CONVERSATION_STATES"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("PERSIST_CONVERSATION_STATES must be a boolean (true/false/1/0)")
+		}
+		cfg.PersistConversationStates = enabled
 	}
 
 	if cfg.TelegramToken == "" {

@@ -181,7 +181,26 @@ func main() {
 	if err != nil {
 		batchWindow = 1 * time.Minute
 	}
-	dedup := notifydedup.New(3 * batchWindow)
+
+	var dedup notifydedup.Allower
+	if cfg.DedupRedisURL != "" {
+		rg, err := notifydedup.NewRedis(cfg.DedupRedisURL, 3*batchWindow, log)
+		if err != nil {
+			log.Error().Err(err).Msg("webhook-svc: failed to construct redis dedup")
+			return
+		}
+		if err := rg.Ping(ctx); err != nil {
+			log.Error().Err(err).Msg("webhook-svc: redis dedup ping failed")
+			return
+		}
+		defer func() { _ = rg.Close() }()
+		dedup = rg
+		log.Info().Msg("notifydedup: using redis backend")
+	} else {
+		memDedup := notifydedup.New(3 * batchWindow)
+		defer memDedup.Stop()
+		dedup = memDedup
+	}
 
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, tgAPI, cfg.JiraWebhookSecret, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)

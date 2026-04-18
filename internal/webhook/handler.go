@@ -41,7 +41,7 @@ type Handler struct {
 	sem            chan struct{}
 	eventQueue     chan Event
 	wg             sync.WaitGroup
-	dedup          *notifydedup.Guard
+	dedup          notifydedup.Allower
 	eventsReceived atomic.Int64
 	pub            eventsv1.Publisher
 }
@@ -53,7 +53,7 @@ func (h *Handler) EventsReceived() int64 {
 	return h.eventsReceived.Load()
 }
 
-func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup *notifydedup.Guard) *Handler {
+func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup notifydedup.Allower) *Handler {
 	h := &Handler{
 		subRepo:       subRepo,
 		userRepo:      userRepo,

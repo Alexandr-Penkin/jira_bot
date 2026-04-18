@@ -23,14 +23,14 @@ func (h *Handler) handleDefaultsProject(ctx context.Context, chatID, userID int6
 	boards, err := h.jiraAPI.GetBoards(ctx, user, projectKey)
 	if err != nil {
 		h.log.Error().Err(err).Str("project", projectKey).Msg("defaults: failed to get boards")
-		if saveErr := h.userRepo.SetDefaults(ctx, userID, projectKey, 0); saveErr != nil {
+		if saveErr := h.prefs.SetDefaults(ctx, userID, projectKey, 0); saveErr != nil {
 			h.log.Error().Err(saveErr).Msg("failed to save defaults")
 		}
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "defaults.boards_failed"))
 	}
 
 	if len(boards) == 0 {
-		if saveErr := h.userRepo.SetDefaults(ctx, userID, projectKey, 0); saveErr != nil {
+		if saveErr := h.prefs.SetDefaults(ctx, userID, projectKey, 0); saveErr != nil {
 			h.log.Error().Err(saveErr).Msg("failed to save defaults")
 		}
 		msg := tgbotapi.NewMessage(chatID, locale.T(lang, "defaults.project_saved", projectKey))
@@ -39,7 +39,7 @@ func (h *Handler) handleDefaultsProject(ctx context.Context, chatID, userID int6
 	}
 
 	if len(boards) == 1 {
-		if saveErr := h.userRepo.SetDefaults(ctx, userID, projectKey, boards[0].ID); saveErr != nil {
+		if saveErr := h.prefs.SetDefaults(ctx, userID, projectKey, boards[0].ID); saveErr != nil {
 			h.log.Error().Err(saveErr).Msg("failed to save defaults")
 		}
 		msg := tgbotapi.NewMessage(chatID, locale.T(lang, "defaults.saved", projectKey, boards[0].Name))
@@ -99,7 +99,7 @@ func (h *Handler) handleDefaultsBoard(ctx context.Context, chatID, userID int64,
 	}
 
 	boardName := findBoardName(boards, boardID)
-	if saveErr := h.userRepo.SetDefaults(ctx, userID, projectKey, boardID); saveErr != nil {
+	if saveErr := h.prefs.SetDefaults(ctx, userID, projectKey, boardID); saveErr != nil {
 		h.log.Error().Err(saveErr).Msg("failed to save defaults")
 	}
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "defaults.saved", projectKey, boardName))
@@ -143,7 +143,7 @@ func (h *Handler) handleDefaultsBoardCallback(ctx context.Context, cq *tgbotapi.
 		boardName = strconv.Itoa(boardID)
 	}
 
-	if saveErr := h.userRepo.SetDefaults(ctx, userID, projectKey, boardID); saveErr != nil {
+	if saveErr := h.prefs.SetDefaults(ctx, userID, projectKey, boardID); saveErr != nil {
 		h.log.Error().Err(saveErr).Msg("failed to save defaults")
 	}
 

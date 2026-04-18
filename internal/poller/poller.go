@@ -96,14 +96,14 @@ type Poller struct {
 	log         zerolog.Logger
 	interval    time.Duration
 	batchWindow time.Duration
-	dedup       *notifydedup.Guard
+	dedup       notifydedup.Allower
 	pending     map[string]*pendingNotification
 	mu          sync.RWMutex
 	lastPollAt  time.Time
 	pub         eventsv1.Publisher
 }
 
-func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
+func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup notifydedup.Allower) *Poller {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}

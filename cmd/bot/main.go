@@ -21,6 +21,7 @@ import (
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/poller"
+	"SleepJiraBot/internal/preferences"
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/scheduler"
 	"SleepJiraBot/internal/storage"
@@ -28,6 +29,7 @@ import (
 	"SleepJiraBot/internal/webhook"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/preferencesclient"
 	"SleepJiraBot/web"
 )
 
@@ -143,6 +145,26 @@ func main() {
 	// worth retiring in 2b.
 	identityProvider := identity.NewLocalProvider(userRepo, oauthClient, log)
 	identityProvider.SetEventPublisher(eventPub)
+
+	// Phase 5: construct the preferences provider. When
+	// PREFERENCES_SVC_URL is set and EMBED_PREFERENCES=false, the
+	// monolith's telegram handlers write preferences through the remote
+	// HTTP client; otherwise they go through the in-process
+	// LocalProvider against the shared users collection. Either way
+	// UserRepo publishes LanguageChanged / DefaultsChanged events, so
+	// co-resident operation never double-publishes.
+	var prefsProvider preferences.Provider
+	if cfg.PreferencesSvcURL != "" && !cfg.EmbedPreferences {
+		remote, err := preferencesclient.New(cfg.PreferencesSvcURL, cfg.InternalAuthToken, nil)
+		if err != nil {
+			log.Error().Err(err).Str("url", cfg.PreferencesSvcURL).Msg("failed to construct preferences client")
+			return
+		}
+		prefsProvider = remote
+		log.Info().Str("url", cfg.PreferencesSvcURL).Msg("preferences: routing through remote preferences-svc")
+	} else {
+		prefsProvider = preferences.NewLocalProvider(userRepo, log)
+	}
 	// Route jira.Client through the lease provider so the monolith and
 	// identity-svc cannot race on refresh-token rotation: the provider
 	// serialises refreshes per user, and there is only one provider.
@@ -159,7 +181,7 @@ func main() {
 
 	var bot *telegram.Bot
 	for attempt := 1; ; attempt++ {
-		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, subRepo, scheduleRepo, webhookMgr, templateRepo, log, cfg.AdminTelegramID, httpClient)
+		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, prefsProvider, subRepo, scheduleRepo, webhookMgr, templateRepo, log, cfg.AdminTelegramID, httpClient)
 		if err == nil {
 			break
 		}
@@ -173,6 +195,14 @@ func main() {
 		case <-ctx.Done():
 			log.Error().Msg("shutdown requested while waiting for Telegram API")
 			return
+		}
+	}
+
+	if cfg.PersistConversationStates {
+		if err := bot.UseMongoStateStore(ctx, mongo.Database(), log); err != nil {
+			log.Error().Err(err).Msg("failed to enable Mongo FSM store; falling back to in-memory")
+		} else {
+			log.Info().Msg("telegram FSM persisted to Mongo (conversation_states)")
 		}
 	}
 
@@ -195,7 +225,25 @@ func main() {
 		log.Warn().Str("value", cfg.BatchWindow).Msg("invalid BATCH_WINDOW, using default 1m")
 		batchWindow = 1 * time.Minute
 	}
-	dedup := notifydedup.New(3 * batchWindow)
+	var dedup notifydedup.Allower
+	if cfg.DedupRedisURL != "" {
+		rg, err := notifydedup.NewRedis(cfg.DedupRedisURL, 3*batchWindow, log)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to construct redis dedup")
+			return
+		}
+		if err := rg.Ping(ctx); err != nil {
+			log.Error().Err(err).Msg("redis dedup ping failed")
+			return
+		}
+		defer func() { _ = rg.Close() }()
+		dedup = rg
+		log.Info().Msg("notifydedup: using redis backend")
+	} else {
+		memDedup := notifydedup.New(3 * batchWindow)
+		defer memDedup.Stop()
+		dedup = memDedup
+	}
 
 	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, batchWindow, dedup)
 	issuePoller.SetEventPublisher(eventPub)
