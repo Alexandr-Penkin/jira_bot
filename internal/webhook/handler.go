@@ -22,6 +22,7 @@ import (
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 const (
@@ -42,6 +43,7 @@ type Handler struct {
 	wg             sync.WaitGroup
 	dedup          *notifydedup.Guard
 	eventsReceived atomic.Int64
+	pub            eventsv1.Publisher
 }
 
 // EventsReceived returns the number of webhook events accepted and queued
@@ -61,9 +63,20 @@ func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, t
 		sem:           make(chan struct{}, maxConcurrentJobs),
 		eventQueue:    make(chan Event, eventQueueSize),
 		dedup:         dedup,
+		pub:           eventsv1.NoopPublisher{},
 	}
 
 	return h
+}
+
+// SetEventPublisher installs a domain event publisher. Each accepted
+// webhook emits sjb.webhook.received.v1 before enqueueing for processing.
+func (h *Handler) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		h.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	h.pub = p
 }
 
 // Start begins processing queued webhook events. It blocks until ctx is
@@ -149,6 +162,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = h.pub.Publish(r.Context(), eventsv1.WebhookReceived{
+		Source:            "jira",
+		EventType:         event.WebhookEvent,
+		ReceivedAt:        time.Now().Unix(),
+		SignatureVerified: h.webhookSecret != "",
+		Payload:           json.RawMessage(body),
+	}, "")
+
 	select {
 	case h.eventQueue <- event:
 		h.eventsReceived.Add(1)
@@ -232,6 +253,8 @@ func (h *Handler) processEvent(event Event) {
 		Str("project", projectKey).
 		Int("subscribers", len(matched)).
 		Msg("notifying subscribers")
+
+	h.publishNormalized(ctx, event, eventType, issueKey, projectKey, matched)
 
 	// Deduplicate per chat.
 	sent := make(map[int64]bool)
@@ -456,4 +479,51 @@ func (h *Handler) formatNotification(event Event, eventType string, lang locale.
 	}
 
 	return sb.String()
+}
+
+// publishNormalized emits sjb.webhook.normalized.v1 once per processed
+// event so downstream services (and, after Phase 3, the Telegram gateway
+// consumer) can act on a stable fan-out contract without re-parsing Jira
+// JSON. Chat-level dedup is left to consumers — Affected here carries the
+// full subscription list so a consumer can differentiate (for analytics)
+// between my_mentions and project_updates hits.
+func (h *Handler) publishNormalized(ctx context.Context, event Event, eventType, issueKey, projectKey string, matched []storage.Subscription) {
+	seen := make(map[int64]bool, len(matched))
+	affected := make([]eventsv1.WebhookAffected, 0, len(matched))
+	for i := range matched {
+		if seen[matched[i].TelegramChatID] {
+			continue
+		}
+		seen[matched[i].TelegramChatID] = true
+		affected = append(affected, eventsv1.WebhookAffected{
+			TelegramID:       matched[i].TelegramUserID,
+			ChatID:           matched[i].TelegramChatID,
+			SubscriptionID:   matched[i].ID.Hex(),
+			SubscriptionType: matched[i].SubscriptionType,
+		})
+	}
+
+	var actor string
+	if event.User != nil {
+		actor = event.User.AccountID
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		h.log.Warn().Err(err).Msg("webhook: failed to marshal normalized payload; emitting without body")
+		payload = nil
+	}
+
+	if err := h.pub.Publish(ctx, &eventsv1.WebhookNormalized{
+		EventType:  event.WebhookEvent,
+		IssueKey:   issueKey,
+		ProjectKey: projectKey,
+		ChangeType: eventType,
+		Actor:      actor,
+		At:         time.Now().Unix(),
+		Affected:   affected,
+		Payload:    payload,
+	}, ""); err != nil {
+		h.log.Error().Err(err).Str("event", eventType).Str("issue", issueKey).Msg("webhook: failed to publish normalized event")
+	}
 }

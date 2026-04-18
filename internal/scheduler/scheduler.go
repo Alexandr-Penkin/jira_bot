@@ -15,6 +15,7 @@ import (
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/storage"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 const (
@@ -32,6 +33,7 @@ type Scheduler struct {
 	mu           sync.Mutex
 	cancelCtx    context.Context
 	cancelFunc   context.CancelFunc
+	pub          eventsv1.Publisher
 }
 
 func New(scheduleRepo *storage.ScheduleRepo, userRepo *storage.UserRepo, jiraClient *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *Scheduler {
@@ -45,7 +47,18 @@ func New(scheduleRepo *storage.ScheduleRepo, userRepo *storage.UserRepo, jiraCli
 		log:          log,
 		cancelCtx:    ctx,
 		cancelFunc:   cancel,
+		pub:          eventsv1.NoopPublisher{},
 	}
+}
+
+// SetEventPublisher installs a domain event publisher. ScheduleDue is
+// emitted on each cron fire before the JQL executes.
+func (s *Scheduler) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		s.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	s.pub = p
 }
 
 func (s *Scheduler) Start(ctx context.Context) error {
@@ -127,6 +140,15 @@ func (s *Scheduler) getLang(ctx context.Context, userID int64) locale.Lang {
 func (s *Scheduler) executeReport(report storage.ScheduledReport) {
 	ctx, cancel := context.WithTimeout(s.cancelCtx, reportQueryTimeout)
 	defer cancel()
+
+	_ = s.pub.Publish(ctx, eventsv1.ScheduleDue{
+		ReportID:   report.ID.Hex(),
+		TelegramID: report.TelegramUserID,
+		ChatID:     report.TelegramChatID,
+		JQL:        report.JQL,
+		ReportName: report.ReportName,
+		FiredAt:    time.Now().Unix(),
+	}, "")
 
 	lang := s.getLang(ctx, report.TelegramUserID)
 

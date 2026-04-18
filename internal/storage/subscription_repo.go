@@ -6,6 +6,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 const (
@@ -35,10 +37,25 @@ type Subscription struct {
 
 type SubscriptionRepo struct {
 	coll *mongo.Collection
+	pub  eventsv1.Publisher
 }
 
 func NewSubscriptionRepo(db *mongo.Database) *SubscriptionRepo {
-	return &SubscriptionRepo{coll: db.Collection("subscriptions")}
+	return &SubscriptionRepo{
+		coll: db.Collection("subscriptions"),
+		pub:  eventsv1.NoopPublisher{},
+	}
+}
+
+// SetEventPublisher installs a domain event publisher. Subscription create
+// and delete operations emit SubscriptionCreated / SubscriptionDeleted on
+// success when a non-nil publisher is installed.
+func (r *SubscriptionRepo) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		r.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	r.pub = p
 }
 
 func (r *SubscriptionRepo) Create(ctx context.Context, sub *Subscription) error {
@@ -47,8 +64,27 @@ func (r *SubscriptionRepo) Create(ctx context.Context, sub *Subscription) error 
 	sub.ModifiedTS = now
 	sub.IsActive = true
 
-	_, err := r.coll.InsertOne(ctx, sub)
-	return err
+	res, err := r.coll.InsertOne(ctx, sub)
+	if err != nil {
+		return err
+	}
+	if oid, ok := res.InsertedID.(bson.ObjectID); ok {
+		sub.ID = oid
+	}
+
+	_ = r.pub.Publish(ctx, &eventsv1.SubscriptionCreated{
+		SubscriptionID:   sub.ID.Hex(),
+		TelegramID:       sub.TelegramUserID,
+		ChatID:           sub.TelegramChatID,
+		SubscriptionType: sub.SubscriptionType,
+		ProjectKey:       sub.JiraProjectKey,
+		IssueKey:         sub.JiraIssueKey,
+		FilterID:         sub.JiraFilterID,
+		FilterName:       sub.JiraFilterName,
+		FilterJQL:        sub.JiraFilterJQL,
+		At:               now,
+	}, "")
+	return nil
 }
 
 // Exists checks if a subscription of the given type already exists for the user/chat.
@@ -198,16 +234,56 @@ func (r *SubscriptionRepo) UpdateLastPolled(ctx context.Context, id bson.ObjectI
 }
 
 func (r *SubscriptionRepo) Delete(ctx context.Context, id bson.ObjectID) error {
-	_, err := r.coll.DeleteOne(ctx, bson.M{"_id": id})
-	return err
+	var sub Subscription
+	_ = r.coll.FindOne(ctx, bson.M{"_id": id}).Decode(&sub)
+
+	if _, err := r.coll.DeleteOne(ctx, bson.M{"_id": id}); err != nil {
+		return err
+	}
+
+	if !sub.ID.IsZero() {
+		_ = r.pub.Publish(ctx, eventsv1.SubscriptionDeleted{
+			SubscriptionID: sub.ID.Hex(),
+			TelegramID:     sub.TelegramUserID,
+			ChatID:         sub.TelegramChatID,
+			At:             time.Now().Unix(),
+		}, "")
+	}
+	return nil
 }
 
 func (r *SubscriptionRepo) DeleteByChat(ctx context.Context, chatID int64) error {
-	_, err := r.coll.DeleteMany(ctx, bson.M{"telegram_chat_id": chatID})
-	return err
+	return r.deleteManyAndPublish(ctx, bson.M{"telegram_chat_id": chatID})
 }
 
 func (r *SubscriptionRepo) DeleteByUserID(ctx context.Context, userID int64) error {
-	_, err := r.coll.DeleteMany(ctx, bson.M{"telegram_user_id": userID})
-	return err
+	return r.deleteManyAndPublish(ctx, bson.M{"telegram_user_id": userID})
+}
+
+// deleteManyAndPublish snapshots the matching subscriptions before the
+// delete so a SubscriptionDeleted event can be emitted per removed row.
+// The read+delete pair is not transactional, but for Phase 0 this is
+// observational data and a minor window of missed events is acceptable.
+func (r *SubscriptionRepo) deleteManyAndPublish(ctx context.Context, filter bson.M) error {
+	cursor, err := r.coll.Find(ctx, filter)
+	var toDelete []Subscription
+	if err == nil {
+		_ = cursor.All(ctx, &toDelete)
+	}
+
+	if _, err := r.coll.DeleteMany(ctx, filter); err != nil {
+		return err
+	}
+
+	now := time.Now().Unix()
+	for i := range toDelete {
+		s := &toDelete[i]
+		_ = r.pub.Publish(ctx, eventsv1.SubscriptionDeleted{
+			SubscriptionID: s.ID.Hex(),
+			TelegramID:     s.TelegramUserID,
+			ChatID:         s.TelegramChatID,
+			At:             now,
+		}, "")
+	}
+	return nil
 }

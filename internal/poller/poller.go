@@ -16,6 +16,7 @@ import (
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 const (
@@ -99,6 +100,7 @@ type Poller struct {
 	pending     map[string]*pendingNotification
 	mu          sync.RWMutex
 	lastPollAt  time.Time
+	pub         eventsv1.Publisher
 }
 
 func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup *notifydedup.Guard) *Poller {
@@ -118,7 +120,18 @@ func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI 
 		batchWindow: batchWindow,
 		dedup:       dedup,
 		pending:     make(map[string]*pendingNotification),
+		pub:         eventsv1.NoopPublisher{},
 	}
+}
+
+// SetEventPublisher installs a domain event publisher. ChangeDetected
+// events are emitted per (subscription, issue) detection window.
+func (p *Poller) SetEventPublisher(pub eventsv1.Publisher) {
+	if pub == nil {
+		p.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	p.pub = pub
 }
 
 // Start begins the polling loop. It blocks until ctx is cancelled.
@@ -297,6 +310,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			if _, inPending := p.pending[pendingKey]; inPending {
 				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
 				passedToPending++
+				p.emitChangeDetected(ctx, sub, issue)
 				continue
 			}
 
@@ -311,6 +325,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 
 			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
 			passedToPending++
+			p.emitChangeDetected(ctx, sub, issue)
 		}
 
 		if len(result.Issues) > 0 {
@@ -405,6 +420,25 @@ func (p *Poller) sinceTimestamp(sub *storage.Subscription) int64 {
 		return sub.LastPolledAt
 	}
 	return fallback
+}
+
+// emitChangeDetected publishes one sjb.subscription.change_detected.v1 per
+// (subscription, issue) match. It is best-effort and never blocks the
+// polling loop.
+func (p *Poller) emitChangeDetected(ctx context.Context, sub *storage.Subscription, issue *jira.Issue) {
+	changeType := "updated"
+	if issue.Fields.Status != nil && strings.EqualFold(issue.Fields.Status.StatusCategory.Key, "new") {
+		changeType = "created"
+	}
+	_ = p.pub.Publish(ctx, eventsv1.ChangeDetected{
+		SubscriptionID:   sub.ID.Hex(),
+		SubscriptionType: sub.SubscriptionType,
+		TelegramID:       sub.TelegramUserID,
+		ChatID:           sub.TelegramChatID,
+		IssueKey:         issue.Key,
+		ChangeType:       changeType,
+		DetectedAt:       time.Now().Unix(),
+	}, "")
 }
 
 func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string, lang locale.Lang, isMention bool) {

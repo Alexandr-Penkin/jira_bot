@@ -16,7 +16,21 @@ import (
 	"github.com/rs/zerolog"
 
 	"SleepJiraBot/internal/storage"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
+	identityv1 "SleepJiraBot/pkg/identityv1"
 )
+
+// tokenRefreshSkew mirrors the provider-side skew so a lease requested
+// from the client always has at least one minute of life left.
+const tokenRefreshSkew = 60 * time.Second
+
+// TokenProvider abstracts Jira access-token acquisition. Both
+// identity.LocalProvider (in-process) and identityclient.Client (HTTP to
+// identity-svc) satisfy this interface, so jira.Client can be wired
+// against either without knowing which it is.
+type TokenProvider interface {
+	Lease(ctx context.Context, req identityv1.TokenLeaseRequest) (*identityv1.TokenLeaseResponse, error)
+}
 
 const (
 	apiBaseURL   = "https://api.atlassian.com/ex/jira/%s/rest/api/3"
@@ -57,11 +71,13 @@ func SetHTTPClient(c *http.Client) {
 }
 
 type Client struct {
-	oauth      *OAuthClient
-	userRepo   *storage.UserRepo
-	log        zerolog.Logger
-	locksMu    sync.Mutex
-	tokenLocks map[int64]*sync.Mutex
+	oauth         *OAuthClient
+	userRepo      *storage.UserRepo
+	log           zerolog.Logger
+	locksMu       sync.Mutex
+	tokenLocks    map[int64]*sync.Mutex
+	pub           eventsv1.Publisher
+	tokenProvider TokenProvider
 }
 
 func NewClient(oauth *OAuthClient, userRepo *storage.UserRepo, log zerolog.Logger) *Client {
@@ -70,7 +86,29 @@ func NewClient(oauth *OAuthClient, userRepo *storage.UserRepo, log zerolog.Logge
 		userRepo:   userRepo,
 		log:        log,
 		tokenLocks: make(map[int64]*sync.Mutex),
+		pub:        eventsv1.NoopPublisher{},
 	}
+}
+
+// SetEventPublisher installs a domain event publisher. Zero-overhead when
+// the publisher is a NoopPublisher (the default), so call sites emit
+// unconditionally.
+func (c *Client) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		c.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	c.pub = p
+}
+
+// SetTokenProvider switches the client to the lease-based token path.
+// When a provider is set, every API call asks the provider for a fresh
+// access token instead of running its own OAuth refresh loop — this is
+// the Phase-2 handover that lets identity-svc own token custody. Passing
+// nil reverts to the legacy in-client refresh path (useful only in
+// tests).
+func (c *Client) SetTokenProvider(p TokenProvider) {
+	c.tokenProvider = p
 }
 
 // StartCleanup is kept for API compatibility. Token locks are never evicted:
@@ -569,12 +607,12 @@ func (c *Client) GetSprints(ctx context.Context, user *storage.User, boardID int
 }
 
 func (c *Client) doAgileRequest(ctx context.Context, user *storage.User, method, path string, reqBody io.Reader) ([]byte, error) {
-	accessToken, err := c.ensureValidToken(ctx, user)
+	accessToken, cloudID, err := c.ensureValidToken(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("ensure valid token: %w", err)
 	}
 
-	apiURL := fmt.Sprintf(agileBaseURL, user.JiraCloudID) + path
+	apiURL := fmt.Sprintf(agileBaseURL, cloudID) + path
 	req, err := http.NewRequestWithContext(ctx, method, apiURL, reqBody)
 	if err != nil {
 		return nil, err
@@ -699,12 +737,12 @@ func (c *Client) SearchUsers(ctx context.Context, user *storage.User, query stri
 }
 
 func (c *Client) doRequest(ctx context.Context, user *storage.User, method, path string, reqBody io.Reader) ([]byte, error) {
-	accessToken, err := c.ensureValidToken(ctx, user)
+	accessToken, cloudID, err := c.ensureValidToken(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("ensure valid token: %w", err)
 	}
 
-	apiURL := fmt.Sprintf(apiBaseURL, user.JiraCloudID) + path
+	apiURL := fmt.Sprintf(apiBaseURL, cloudID) + path
 	req, err := http.NewRequestWithContext(ctx, method, apiURL, reqBody)
 	if err != nil {
 		return nil, err
@@ -734,12 +772,29 @@ func (c *Client) doRequest(ctx context.Context, user *storage.User, method, path
 	return body, nil
 }
 
-// ensureValidToken checks whether the user's token is still valid and refreshes
-// it if needed. It returns the current access token for the caller to use,
-// avoiding a race where another goroutine might be mutating user fields.
-func (c *Client) ensureValidToken(ctx context.Context, user *storage.User) (string, error) {
-	if time.Now().Before(user.TokenExpiresAt.Add(-60 * time.Second)) {
-		return user.AccessToken, nil
+// ensureValidToken returns a fresh access token and the cloud id to use
+// in the request URL. When a TokenProvider is set (the Phase-2 default
+// path), this is a single lease call — the provider handles refresh,
+// mutex, and event publishing. Without a provider, the legacy in-client
+// refresh loop runs against userRepo + oauth.
+func (c *Client) ensureValidToken(ctx context.Context, user *storage.User) (accessToken, cloudID string, err error) {
+	if c.tokenProvider != nil {
+		lease, err := c.tokenProvider.Lease(ctx, identityv1.TokenLeaseRequest{
+			TelegramID:    user.TelegramUserID,
+			MinTTLSeconds: int(tokenRefreshSkew.Seconds()),
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("token lease: %w", err)
+		}
+		cid := lease.CloudID
+		if cid == "" {
+			cid = user.JiraCloudID
+		}
+		return lease.AccessToken, cid, nil
+	}
+
+	if time.Now().Before(user.TokenExpiresAt.Add(-tokenRefreshSkew)) {
+		return user.AccessToken, user.JiraCloudID, nil
 	}
 
 	mu := c.getUserTokenLock(user.TelegramUserID)
@@ -749,21 +804,21 @@ func (c *Client) ensureValidToken(ctx context.Context, user *storage.User) (stri
 	// Re-read from DB after acquiring lock — another goroutine may have already refreshed.
 	fresh, err := c.userRepo.GetByTelegramID(ctx, user.TelegramUserID)
 	if err != nil {
-		return "", fmt.Errorf("re-read user: %w", err)
+		return "", "", fmt.Errorf("re-read user: %w", err)
 	}
 	if fresh == nil {
-		return "", fmt.Errorf("user %d not found after lock", user.TelegramUserID)
+		return "", "", fmt.Errorf("user %d not found after lock", user.TelegramUserID)
 	}
 
-	if time.Now().Before(fresh.TokenExpiresAt.Add(-60 * time.Second)) {
-		return fresh.AccessToken, nil
+	if time.Now().Before(fresh.TokenExpiresAt.Add(-tokenRefreshSkew)) {
+		return fresh.AccessToken, fresh.JiraCloudID, nil
 	}
 
 	c.log.Debug().Int64("telegram_user_id", user.TelegramUserID).Msg("refreshing jira token")
 
 	tokenResp, err := c.oauth.RefreshTokens(ctx, fresh.RefreshToken)
 	if err != nil {
-		return "", fmt.Errorf("refresh token: %w", err)
+		return "", "", fmt.Errorf("refresh token: %w", err)
 	}
 
 	newAccessToken := tokenResp.AccessToken
@@ -774,10 +829,18 @@ func (c *Client) ensureValidToken(ctx context.Context, user *storage.User) (stri
 	newExpiresAt := c.oauth.TokenExpiresAt(tokenResp.ExpiresIn)
 
 	if err = c.userRepo.UpdateTokens(ctx, user.TelegramUserID, newAccessToken, newRefreshToken, newExpiresAt); err != nil {
-		return "", fmt.Errorf("save refreshed tokens: %w", err)
+		return "", "", fmt.Errorf("save refreshed tokens: %w", err)
 	}
 
-	return newAccessToken, nil
+	if pubErr := c.pub.Publish(ctx, eventsv1.TokensRefreshed{
+		TelegramID:  user.TelegramUserID,
+		RefreshedAt: time.Now().Unix(),
+		ExpiresAt:   newExpiresAt.Unix(),
+	}, ""); pubErr != nil {
+		c.log.Warn().Err(pubErr).Int64("telegram_user_id", user.TelegramUserID).Msg("publish tokens_refreshed failed")
+	}
+
+	return newAccessToken, fresh.JiraCloudID, nil
 }
 
 // --- Issue creation ---

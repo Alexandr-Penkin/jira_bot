@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"SleepJiraBot/internal/crypto"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 type User struct {
@@ -41,10 +42,23 @@ type User struct {
 type UserRepo struct {
 	coll *mongo.Collection
 	enc  *crypto.Encryptor
+	pub  eventsv1.Publisher
 }
 
 func NewUserRepo(db *mongo.Database, enc *crypto.Encryptor) *UserRepo {
-	return &UserRepo{coll: db.Collection("users"), enc: enc}
+	return &UserRepo{coll: db.Collection("users"), enc: enc, pub: eventsv1.NoopPublisher{}}
+}
+
+// SetEventPublisher installs a domain event publisher. UserDeauthorized
+// fires after a successful ClearJiraCredentials so downstream services
+// (subscription-svc, scheduler-svc) can prune resources that no longer
+// have a token to act on.
+func (r *UserRepo) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		r.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	r.pub = p
 }
 
 func (r *UserRepo) GetByTelegramID(ctx context.Context, telegramUserID int64) (*User, error) {
@@ -294,8 +308,15 @@ func (r *UserRepo) ClearJiraCredentials(ctx context.Context, telegramUserID int6
 			"token_expires_at": "",
 		},
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	return err
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+
+	_ = r.pub.Publish(ctx, eventsv1.UserDeauthorized{
+		TelegramID: telegramUserID,
+		At:         time.Now().Unix(),
+	}, "")
+	return nil
 }
 
 // CountAll returns the total number of users.

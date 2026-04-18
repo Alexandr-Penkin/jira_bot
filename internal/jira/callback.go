@@ -17,6 +17,7 @@ import (
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/middleware"
 	"SleepJiraBot/internal/storage"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 const pendingSiteMaxAge = 10 * time.Minute
@@ -40,6 +41,7 @@ type CallbackServer struct {
 	mux          *http.ServeMux
 	pendingMu    sync.Mutex
 	pendingSites map[int64]*PendingSiteSelection // keyed by TelegramUserID
+	pub          eventsv1.Publisher
 }
 
 func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, webhookMgr *WebhookManager, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *CallbackServer {
@@ -51,6 +53,7 @@ func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, use
 		tgAPI:        tgAPI,
 		log:          log,
 		pendingSites: make(map[int64]*PendingSiteSelection),
+		pub:          eventsv1.NoopPublisher{},
 	}
 
 	callbackRL := middleware.NewRateLimiter(10, 20, time.Minute, ctx)
@@ -76,6 +79,16 @@ func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, use
 // Handle registers an additional handler on the callback server's mux.
 func (cs *CallbackServer) Handle(pattern string, handler http.Handler) {
 	cs.mux.Handle(pattern, handler)
+}
+
+// SetEventPublisher installs a domain event publisher. Phase 0 of the DDD
+// split emits UserAuthenticated alongside the existing Upsert.
+func (cs *CallbackServer) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		cs.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	cs.pub = p
 }
 
 // HandleFunc registers a function as a handler on the callback server's mux.
@@ -258,6 +271,16 @@ func (cs *CallbackServer) finalizeSiteConnection(ctx context.Context, telegramUs
 		Int64("telegram_user_id", telegramUserID).
 		Str("jira_site", resource.Name).
 		Msg("user connected to Jira")
+
+	if pubErr := cs.pub.Publish(ctx, eventsv1.UserAuthenticated{
+		TelegramID:      telegramUserID,
+		JiraAccountID:   accountID,
+		CloudID:         resource.ID,
+		SiteURL:         resource.URL,
+		AuthenticatedAt: time.Now().Unix(),
+	}, ""); pubErr != nil {
+		cs.log.Warn().Err(pubErr).Int64("telegram_user_id", telegramUserID).Msg("publish user_authenticated failed")
+	}
 
 	// Re-fetch the persisted user so the webhook manager gets a copy
 	// with decrypted tokens (Upsert leaves the input struct's tokens

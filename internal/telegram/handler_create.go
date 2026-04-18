@@ -428,7 +428,7 @@ func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int6
 		return
 	}
 
-	jql := fmt.Sprintf(`project = "%s" AND issuetype = Epic AND statusCategory != Done ORDER BY updated DESC`, data["project"])
+	jql := fmt.Sprintf(`project = %q AND issuetype = Epic AND statusCategory != Done ORDER BY updated DESC`, data["project"])
 	result, err := h.jiraAPI.SearchIssues(ctx, user, jql, maxEpicOptions)
 	if err != nil {
 		h.log.Error().Err(err).Msg("failed to load epics")
@@ -447,7 +447,8 @@ func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int6
 	}
 
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(result.Issues)+2)
-	for _, issue := range result.Issues {
+	for i := range result.Issues {
+		issue := &result.Issues[i]
 		label := fmt.Sprintf("%s — %s", issue.Key, issue.Fields.Summary)
 		if len(label) > 50 {
 			label = label[:47] + "..."
@@ -872,7 +873,8 @@ func (h *Handler) fetchTemplateBodyFromRecent(ctx context.Context, userID int64,
 			h.log.Debug().Err(err).Str("jql", jql).Msg("template sample search failed")
 			continue
 		}
-		for _, issue := range result.Issues {
+		for i := range result.Issues {
+			issue := &result.Issues[i]
 			full, ferr := h.jiraAPI.GetIssue(ctx, user, issue.Key)
 			if ferr != nil || full == nil || full.Fields.Description == nil {
 				continue

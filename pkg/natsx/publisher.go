@@ -1,0 +1,161 @@
+// Package natsx is a thin wrapper around nats.go + JetStream tailored for
+// SleepJiraBot's event-bus contract.
+//
+// Phase 0 of the DDD microservices split uses this only to publish domain
+// events alongside the existing monolith. Consumers are introduced in
+// later phases.
+package natsx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog"
+
+	eventsv1 "SleepJiraBot/pkg/events/v1"
+)
+
+// JetStreamPublisher publishes envelope-wrapped events with the event's
+// idempotency key as the Nats-Msg-Id header, letting JetStream dedupe
+// retries of the same logical occurrence. It implements eventsv1.Publisher.
+type JetStreamPublisher struct {
+	nc  *nats.Conn
+	js  nats.JetStreamContext
+	log zerolog.Logger
+}
+
+// StreamConfig describes a JetStream stream to ensure on startup.
+type StreamConfig struct {
+	Name     string
+	Subjects []string
+	MaxAge   time.Duration
+	Storage  nats.StorageType
+}
+
+// DefaultStreams returns the set of streams the monolith ensures in
+// Phase 0. Retention is left at Limits so events remain replayable while
+// downstream services are being built.
+func DefaultStreams() []StreamConfig {
+	const week = 7 * 24 * time.Hour
+	return []StreamConfig{
+		{Name: eventsv1.StreamIdentity, Subjects: []string{eventsv1.SubjectsIdentity}, MaxAge: week, Storage: nats.FileStorage},
+		{Name: eventsv1.StreamPreferences, Subjects: []string{eventsv1.SubjectsPreferences}, MaxAge: week, Storage: nats.FileStorage},
+		{Name: eventsv1.StreamSubscription, Subjects: []string{eventsv1.SubjectsSubscription}, MaxAge: week, Storage: nats.FileStorage},
+		{Name: eventsv1.StreamWebhook, Subjects: []string{eventsv1.SubjectsWebhook}, MaxAge: week, Storage: nats.FileStorage},
+		{Name: eventsv1.StreamSchedule, Subjects: []string{eventsv1.SubjectsSchedule}, MaxAge: week, Storage: nats.FileStorage},
+		{Name: eventsv1.StreamNotify, Subjects: []string{eventsv1.SubjectsNotify}, MaxAge: week, Storage: nats.FileStorage},
+	}
+}
+
+// Connect dials NATS and returns a ready-to-use publisher. Callers that
+// want the no-op behavior should construct NoopPublisher directly rather
+// than plumbing a disabled flag through.
+func Connect(ctx context.Context, url string, log zerolog.Logger) (*JetStreamPublisher, error) {
+	if url == "" {
+		return nil, errors.New("natsx: empty url")
+	}
+	nc, err := nats.Connect(url,
+		nats.Name("sleepjirabot-monolith"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2*time.Second),
+		nats.Timeout(5*time.Second),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			log.Warn().Err(err).Msg("nats disconnected")
+		}),
+		nats.ReconnectHandler(func(c *nats.Conn) {
+			log.Info().Str("url", c.ConnectedUrl()).Msg("nats reconnected")
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("natsx: connect: %w", err)
+	}
+
+	js, err := nc.JetStream(nats.PublishAsyncMaxPending(256))
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("natsx: jetstream: %w", err)
+	}
+
+	p := &JetStreamPublisher{nc: nc, js: js, log: log}
+
+	// Context is accepted for symmetry with future async-ensure code
+	// paths, though the current JetStream AddStream call is blocking.
+	_ = ctx
+
+	return p, nil
+}
+
+// EnsureStreams creates the given streams if they do not exist, or
+// updates subjects/retention when they do. Idempotent across restarts.
+func (p *JetStreamPublisher) EnsureStreams(streams []StreamConfig) error {
+	for _, s := range streams {
+		cfg := &nats.StreamConfig{
+			Name:       s.Name,
+			Subjects:   s.Subjects,
+			Retention:  nats.LimitsPolicy,
+			MaxAge:     s.MaxAge,
+			Storage:    s.Storage,
+			Duplicates: 2 * time.Minute,
+		}
+		info, err := p.js.StreamInfo(s.Name)
+		if err != nil && !errors.Is(err, nats.ErrStreamNotFound) {
+			return fmt.Errorf("natsx: stream info %s: %w", s.Name, err)
+		}
+		if info == nil {
+			if _, err := p.js.AddStream(cfg); err != nil {
+				return fmt.Errorf("natsx: add stream %s: %w", s.Name, err)
+			}
+			p.log.Info().Str("stream", s.Name).Strs("subjects", s.Subjects).Msg("jetstream stream created")
+			continue
+		}
+		if _, err := p.js.UpdateStream(cfg); err != nil {
+			return fmt.Errorf("natsx: update stream %s: %w", s.Name, err)
+		}
+	}
+	return nil
+}
+
+// Publish marshals the event into an Envelope and publishes it with its
+// idempotency key as the Nats-Msg-Id header.
+func (p *JetStreamPublisher) Publish(ctx context.Context, event eventsv1.Event, traceID string) error {
+	data, err := eventsv1.Marshal(event, traceID)
+	if err != nil {
+		return fmt.Errorf("natsx: marshal %s: %w", event.Subject(), err)
+	}
+	msg := &nats.Msg{
+		Subject: event.Subject(),
+		Data:    data,
+		Header:  nats.Header{},
+	}
+	msg.Header.Set(nats.MsgIdHdr, event.IdempotencyKey())
+	if traceID != "" {
+		msg.Header.Set("traceparent", traceID)
+	}
+
+	// We use the async publisher so slow NATS latency cannot block
+	// primary request paths. The ack is observed in the background.
+	fut, err := p.js.PublishMsgAsync(msg)
+	if err != nil {
+		return fmt.Errorf("natsx: publish %s: %w", event.Subject(), err)
+	}
+	go func() {
+		select {
+		case <-fut.Ok():
+		case err := <-fut.Err():
+			p.log.Warn().Err(err).Str("subject", event.Subject()).Msg("jetstream publish ack failed")
+		case <-ctx.Done():
+		}
+	}()
+	return nil
+}
+
+// Close drains the NATS connection.
+func (p *JetStreamPublisher) Close() error {
+	if p.nc == nil {
+		return nil
+	}
+	return p.nc.Drain()
+}

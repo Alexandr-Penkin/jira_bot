@@ -5,13 +5,142 @@ services:
     env_file: .env
     environment:
       MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
     ports:
       - "8080:8080"
     depends_on:
       mongo:
         condition: service_healthy
+      nats:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Phase 1: standalone Jira webhook ingress. Enable with
+  # `docker compose --profile webhook-svc up`. When this service is used,
+  # set EMBED_WEBHOOK_SERVER=false in the bot's env and point Jira's
+  # webhook URLs at the webhook-svc address (or host:8081).
+  webhook-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/webhook-svc
+    profiles: ["webhook-svc"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      WEBHOOK_SVC_ADDR: ":8081"
+      ENABLE_EVENT_PUBLISH: "true"
+    ports:
+      - "8081:8081"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Phase 2 (infrastructure slice): standalone Jira token custody.
+  # Enable with `docker compose --profile identity-svc up`. Exposes
+  # POST /internal/lease on :9080 for sibling services. The monolith
+  # keeps its own embedded lease listener on :9080 too — when running
+  # identity-svc co-resident, remap the monolith's INTERNAL_ADDR (e.g.
+  # to :9079) or disable the bot's internal listener.
+  identity-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/identity-svc
+    profiles: ["identity-svc"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      INTERNAL_ADDR: ":9080"
+      ENABLE_EVENT_PUBLISH: "true"
+    ports:
+      - "9080:9080"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Phase 3: standalone Jira polling. Enable with
+  # `docker compose --profile subscription-svc up`. Set
+  # EMBED_POLLER=false on the bot to avoid double-polling. Uses
+  # IDENTITY_SVC_URL (if set) to lease tokens remotely; otherwise
+  # resolves tokens in-process against shared Mongo.
+  subscription-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/subscription-svc
+    profiles: ["subscription-svc"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      SUBSCRIPTION_SVC_ADDR: ":8082"
+      ENABLE_EVENT_PUBLISH: "true"
+    ports:
+      - "8082:8082"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Phase 4: standalone cron-triggered reports. Enable with
+  # `docker compose --profile scheduler-svc up`. Set
+  # EMBED_SCHEDULER=false on the bot to avoid double-firing.
+  scheduler-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/scheduler-svc
+    profiles: ["scheduler-svc"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      SCHEDULER_SVC_ADDR: ":8083"
+      ENABLE_EVENT_PUBLISH: "true"
+    ports:
+      - "8083:8083"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -31,5 +160,27 @@ services:
       retries: 3
       start_period: 10s
 
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command:
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "-m"
+      - "8222"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
 volumes:
   mongo_data:
+  nats_data:

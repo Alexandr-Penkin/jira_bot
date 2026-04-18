@@ -130,3 +130,147 @@ func TestGetEnvOrDefault(t *testing.T) {
 	assert.Equal(t, "value123", getEnvOrDefault("TEST_KEY_EXISTS", "default"))
 	assert.Equal(t, "default", getEnvOrDefault("TEST_KEY_DOES_NOT_EXIST", "default"))
 }
+
+func TestLoad_EmbedFlagsDefaultTrue(t *testing.T) {
+	// All three Embed* flags must default to true so that operators who
+	// have never touched these env vars keep running the monolith as-is.
+	setRequiredEnv(t)
+	os.Unsetenv("EMBED_WEBHOOK_SERVER")
+	os.Unsetenv("EMBED_POLLER")
+	os.Unsetenv("EMBED_SCHEDULER")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.EmbedWebhookServer)
+	assert.True(t, cfg.EmbedPoller)
+	assert.True(t, cfg.EmbedScheduler)
+}
+
+func TestLoad_EmbedFlagsDisabled(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EMBED_WEBHOOK_SERVER", "false")
+	t.Setenv("EMBED_POLLER", "false")
+	t.Setenv("EMBED_SCHEDULER", "0")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.EmbedWebhookServer)
+	assert.False(t, cfg.EmbedPoller)
+	assert.False(t, cfg.EmbedScheduler)
+}
+
+func TestLoad_EmbedPollerInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EMBED_POLLER", "maybe")
+
+	cfg, err := Load()
+	assert.Nil(t, cfg)
+	assert.EqualError(t, err, "EMBED_POLLER must be a boolean (true/false/1/0)")
+}
+
+func TestLoad_EmbedSchedulerInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EMBED_SCHEDULER", "nope")
+
+	cfg, err := Load()
+	assert.Nil(t, cfg)
+	assert.EqualError(t, err, "EMBED_SCHEDULER must be a boolean (true/false/1/0)")
+}
+
+func TestLoad_EmbedWebhookServerInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EMBED_WEBHOOK_SERVER", "banana")
+
+	cfg, err := Load()
+	assert.Nil(t, cfg)
+	assert.EqualError(t, err, "EMBED_WEBHOOK_SERVER must be a boolean (true/false/1/0)")
+}
+
+func TestLoad_EnableEventPublishInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("ENABLE_EVENT_PUBLISH", "kinda")
+
+	cfg, err := Load()
+	assert.Nil(t, cfg)
+	assert.EqualError(t, err, "ENABLE_EVENT_PUBLISH must be a boolean (true/false/1/0)")
+}
+
+func TestLoad_EnableEventPublishParsed(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("ENABLE_EVENT_PUBLISH", "true")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.EnableEventPublish)
+}
+
+func TestLoad_IdentitySvcWiring(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("IDENTITY_SVC_URL", "http://identity-svc:9080")
+	t.Setenv("INTERNAL_AUTH_TOKEN", "secret-bearer")
+	t.Setenv("INTERNAL_ADDR", ":9999")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "http://identity-svc:9080", cfg.IdentitySvcURL)
+	assert.Equal(t, "secret-bearer", cfg.InternalAuthToken)
+	assert.Equal(t, ":9999", cfg.InternalAddr)
+}
+
+func TestLoad_IdentitySvcDefaults(t *testing.T) {
+	setRequiredEnv(t)
+	os.Unsetenv("IDENTITY_SVC_URL")
+	os.Unsetenv("INTERNAL_AUTH_TOKEN")
+	os.Unsetenv("INTERNAL_ADDR")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.IdentitySvcURL)
+	assert.Empty(t, cfg.InternalAuthToken)
+	assert.Equal(t, ":9080", cfg.InternalAddr)
+}
+
+func TestLoad_NatsURLDefault(t *testing.T) {
+	setRequiredEnv(t)
+	os.Unsetenv("NATS_URL")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "nats://localhost:4222", cfg.NatsURL)
+}
+
+func TestLoad_WebhookSvcAddrDefault(t *testing.T) {
+	setRequiredEnv(t)
+	os.Unsetenv("WEBHOOK_SVC_ADDR")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, ":8081", cfg.WebhookSvcAddr)
+}
+
+func TestLoad_AdminTelegramIDParsed(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("ADMIN_TELEGRAM_ID", "12345")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, int64(12345), cfg.AdminTelegramID)
+}
+
+func TestLoad_AdminTelegramIDInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("ADMIN_TELEGRAM_ID", "not-a-number")
+
+	cfg, err := Load()
+	assert.Nil(t, cfg)
+	assert.EqualError(t, err, "ADMIN_TELEGRAM_ID must be a valid integer")
+}
+
+func TestLoad_AdminTelegramIDEmptyLeavesZero(t *testing.T) {
+	setRequiredEnv(t)
+	os.Unsetenv("ADMIN_TELEGRAM_ID")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), cfg.AdminTelegramID)
+}

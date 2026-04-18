@@ -12,6 +12,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 func TestVerifySignature_Valid(t *testing.T) {
@@ -93,6 +95,7 @@ func TestServeHTTP_ValidJSON_Accepted(t *testing.T) {
 		log:           zerolog.Nop(),
 		sem:           make(chan struct{}, maxConcurrentJobs),
 		eventQueue:    make(chan Event, eventQueueSize),
+		pub:           eventsv1.NoopPublisher{},
 	}
 
 	event := Event{
