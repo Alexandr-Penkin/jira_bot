@@ -185,6 +185,37 @@ services:
       retries: 3
       start_period: 10s
 
+  # Phase 6a: standalone Telegram delivery. Enable with
+  # `docker compose --profile telegram-svc up`. Set
+  # NOTIFY_VIA_EVENTS=true on the bot/poller/scheduler/webhook to route
+  # Send calls through NATS; telegram-svc is the single subscriber of
+  # sjb.notify.requested.v1 and owns the tgbotapi Send path.
+  telegram-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/telegram-svc
+    profiles: ["telegram-svc"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NATS_URL: nats://nats:4222
+      TELEGRAM_SVC_ADDR: ":8084"
+      ENABLE_EVENT_PUBLISH: "true"
+    ports:
+      - "8084:8084"
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8084/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # Shared Redis for distributed notifydedup. Enable with
   # `docker compose --profile redis up`. When DEDUP_REDIS_URL is set,
   # subscription-svc / webhook-svc / bot all SETNX-coordinate through

@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/rs/zerolog"
 
 	"SleepJiraBot/internal/format"
@@ -23,6 +22,7 @@ import (
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/notifier"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 type Handler struct {
 	subRepo        *storage.SubscriptionRepo
 	userRepo       *storage.UserRepo
-	tgAPI          *tgbotapi.BotAPI
+	notifier       notifier.Notifier
 	webhookSecret  string
 	log            zerolog.Logger
 	sem            chan struct{}
@@ -53,11 +53,11 @@ func (h *Handler) EventsReceived() int64 {
 	return h.eventsReceived.Load()
 }
 
-func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, tgAPI *tgbotapi.BotAPI, webhookSecret string, log zerolog.Logger, dedup notifydedup.Allower) *Handler {
+func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, n notifier.Notifier, webhookSecret string, log zerolog.Logger, dedup notifydedup.Allower) *Handler {
 	h := &Handler{
 		subRepo:       subRepo,
 		userRepo:      userRepo,
-		tgAPI:         tgAPI,
+		notifier:      n,
 		webhookSecret: webhookSecret,
 		log:           log,
 		sem:           make(chan struct{}, maxConcurrentJobs),
@@ -302,11 +302,19 @@ func (h *Handler) processEvent(event Event) {
 		}
 
 		text := h.formatNotification(event, eventType, lang)
-		msg := tgbotapi.NewMessage(matched[i].TelegramChatID, text)
-		msg.ParseMode = tgbotapi.ModeMarkdown
-		msg.DisableWebPagePreview = true
-
-		if _, err := h.tgAPI.Send(msg); err != nil {
+		dedupKey := fmt.Sprintf("webhook:%d:%s:%s", matched[i].TelegramChatID, issueKey, eventType)
+		if event.Comment != nil && event.Comment.ID != "" {
+			dedupKey += ":" + event.Comment.ID
+		}
+		if err := h.notifier.Send(ctx, notifier.Request{
+			ChatID:                matched[i].TelegramChatID,
+			TelegramID:            matched[i].TelegramUserID,
+			Text:                  text,
+			ParseMode:             "Markdown",
+			DisableWebPagePreview: true,
+			DedupKey:              dedupKey,
+			Reason:                "webhook:" + eventType,
+		}); err != nil {
 			h.log.Error().
 				Err(err).
 				Int64("chat_id", matched[i].TelegramChatID).

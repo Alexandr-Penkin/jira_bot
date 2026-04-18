@@ -81,6 +81,15 @@ type Config struct {
 	// redis://user:pass@host:port/db.
 	DedupRedisURL string
 
+	// Phase 6a: NotifyViaEvents flips the producer-side notifier from
+	// direct Telegram API calls to NATS event publishing. When true AND
+	// EnableEventPublish is true, poller/scheduler/webhook publish
+	// NotifyRequested events; a separate telegram-svc is expected to
+	// consume and deliver. Default false preserves direct-send behaviour
+	// — flipping to true without a running telegram-svc will silently
+	// queue messages in JetStream.
+	NotifyViaEvents bool
+
 	// Phase 6 prep: PersistConversationStates swaps the Telegram FSM's
 	// default in-memory store for a Mongo-backed one (collection
 	// conversation_states, TTL-expired). Opt-in for two reasons — Mongo
@@ -165,6 +174,14 @@ func Load() (*Config, error) {
 			return nil, errors.New("PERSIST_CONVERSATION_STATES must be a boolean (true/false/1/0)")
 		}
 		cfg.PersistConversationStates = enabled
+	}
+
+	if v := os.Getenv("NOTIFY_VIA_EVENTS"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("NOTIFY_VIA_EVENTS must be a boolean (true/false/1/0)")
+		}
+		cfg.NotifyViaEvents = enabled
 	}
 
 	if cfg.TelegramToken == "" {

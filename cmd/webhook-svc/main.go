@@ -36,6 +36,7 @@ import (
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/notifier"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -158,23 +159,24 @@ func main() {
 
 	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
 
-	// webhook-svc has no Telegram bot of its own: notifications flow
-	// through WebhookNormalized events. The existing handler still
-	// needs a tgAPI reference because, in embedded mode, it sends
-	// Telegram messages directly. In external mode we pass a nil
-	// BotAPI — the handler's Send path is exercised only when
-	// EMBED_WEBHOOK_SERVER=true inside the monolith, so here it
-	// short-circuits at the normalized-event publish and leaves
-	// delivery to the monolith consumer (Phase 3).
-	//
-	// TODO(phase-3): when subscription-svc consumer owns fan-out,
-	// remove tgAPI from webhook.Handler entirely.
-	var tgAPI *tgbotapi.BotAPI
-	if cfg.TelegramToken != "" {
-		tgAPI, err = tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
-		if err != nil {
-			log.Warn().Err(err).Msg("webhook-svc: Telegram API init failed; direct Telegram sends disabled (safe while monolith consumes normalized events)")
+	// webhook-svc delivers notifications via the notifier seam: when
+	// NOTIFY_VIA_EVENTS is on, it publishes NotifyRequested events and a
+	// separate telegram-svc delivers; otherwise it direct-sends through
+	// its own tgbotapi client (the same code path the monolith uses when
+	// EMBED_WEBHOOK_SERVER=true).
+	var sendNotifier notifier.Notifier
+	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
+		sendNotifier = notifier.NewEvent(eventPub, log)
+		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
+	} else {
+		var tgAPI *tgbotapi.BotAPI
+		if cfg.TelegramToken != "" {
+			tgAPI, err = tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
+			if err != nil {
+				log.Warn().Err(err).Msg("webhook-svc: Telegram API init failed; direct Telegram sends disabled")
+			}
 		}
+		sendNotifier = notifier.NewDirect(tgAPI, log)
 	}
 
 	batchWindow, err := time.ParseDuration(cfg.BatchWindow)
@@ -202,7 +204,7 @@ func main() {
 		dedup = memDedup
 	}
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, tgAPI, cfg.JiraWebhookSecret, log, dedup)
+	webhookHandler := webhook.NewHandler(subRepo, userRepo, sendNotifier, cfg.JiraWebhookSecret, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)
 
 	mux := http.NewServeMux()

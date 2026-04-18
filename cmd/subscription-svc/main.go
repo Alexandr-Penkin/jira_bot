@@ -39,6 +39,7 @@ import (
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/notifier"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -144,10 +145,17 @@ func main() {
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
 
-	tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
-	if err != nil {
-		log.Error().Err(err).Msg("subscription-svc: Telegram API init failed")
-		return
+	var sendNotifier notifier.Notifier
+	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
+		sendNotifier = notifier.NewEvent(eventPub, log)
+		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
+	} else {
+		tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
+		if err != nil {
+			log.Error().Err(err).Msg("subscription-svc: Telegram API init failed")
+			return
+		}
+		sendNotifier = notifier.NewDirect(tgAPI, log)
 	}
 
 	pollInterval := mustDuration(cfg.PollInterval, 30*time.Second)
@@ -173,7 +181,7 @@ func main() {
 		dedup = memDedup
 	}
 
-	issuePoller := poller.New(subRepo, userRepo, jiraClient, tgAPI, log, pollInterval, batchWindow, dedup)
+	issuePoller := poller.New(subRepo, userRepo, jiraClient, sendNotifier, log, pollInterval, batchWindow, dedup)
 	issuePoller.SetEventPublisher(eventPub)
 
 	healthSrv := &http.Server{

@@ -159,3 +159,18 @@ func (p *JetStreamPublisher) Close() error {
 	}
 	return p.nc.Drain()
 }
+
+// PullSubscribe creates (or reuses) a durable pull subscription on the
+// given stream and subject. The durable name survives restarts and
+// coordinates delivery across multiple consumer replicas — JetStream
+// hands each message to exactly one subscriber sharing the durable.
+//
+// Consumers should call Fetch in a loop, ack/nak each message based on
+// processing outcome, and Drain on shutdown.
+func (p *JetStreamPublisher) PullSubscribe(subject, durable string) (*nats.Subscription, error) {
+	return p.js.PullSubscribe(subject, durable,
+		nats.ManualAck(),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(5),
+	)
+}

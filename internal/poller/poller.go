@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/rs/zerolog"
 
 	"SleepJiraBot/internal/format"
@@ -17,6 +16,7 @@ import (
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/storage"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/notifier"
 )
 
 const (
@@ -92,7 +92,7 @@ type Poller struct {
 	subRepo     *storage.SubscriptionRepo
 	userRepo    *storage.UserRepo
 	jiraAPI     *jira.Client
-	tgAPI       *tgbotapi.BotAPI
+	notifier    notifier.Notifier
 	log         zerolog.Logger
 	interval    time.Duration
 	batchWindow time.Duration
@@ -103,7 +103,7 @@ type Poller struct {
 	pub         eventsv1.Publisher
 }
 
-func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger, interval, batchWindow time.Duration, dedup notifydedup.Allower) *Poller {
+func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI *jira.Client, n notifier.Notifier, log zerolog.Logger, interval, batchWindow time.Duration, dedup notifydedup.Allower) *Poller {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
@@ -114,7 +114,7 @@ func New(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, jiraAPI 
 		subRepo:     subRepo,
 		userRepo:    userRepo,
 		jiraAPI:     jiraAPI,
-		tgAPI:       tgAPI,
+		notifier:    n,
 		log:         log,
 		interval:    interval,
 		batchWindow: batchWindow,
@@ -152,7 +152,7 @@ func (p *Poller) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.poll(ctx)
-			p.flushPending()
+			p.flushPending(ctx)
 		}
 	}
 }
@@ -514,26 +514,31 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 
 // flushPending sends notifications for issues that have been pending
 // longer than batchWindow (no more changes expected).
-func (p *Poller) flushPending() {
+func (p *Poller) flushPending(ctx context.Context) {
 	now := time.Now()
 	for key, pn := range p.pending {
 		if now.Sub(pn.firstSeen) < p.batchWindow {
 			continue
 		}
-		p.sendPendingNotification(pn)
+		p.sendPendingNotification(ctx, pn)
 		delete(p.pending, key)
 	}
 }
 
 // flushAllPending sends all pending notifications (used on shutdown).
+// The parent context has been cancelled by the time we get here, so we
+// use a detached background context with a short timeout — otherwise
+// event publishing after Start's ctx.Done() would be skipped.
 func (p *Poller) flushAllPending() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	for key, pn := range p.pending {
-		p.sendPendingNotification(pn)
+		p.sendPendingNotification(ctx, pn)
 		delete(p.pending, key)
 	}
 }
 
-func (p *Poller) sendPendingNotification(pn *pendingNotification) {
+func (p *Poller) sendPendingNotification(ctx context.Context, pn *pendingNotification) {
 	issueURL := fmt.Sprintf("%s/browse/%s", pn.siteURL, pn.issueKey)
 	lang := pn.lang
 
@@ -627,11 +632,15 @@ func (p *Poller) sendPendingNotification(pn *pendingNotification) {
 		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.status"), format.EscapeMarkdown(issue.Fields.Status.Name))
 	}
 
-	msg := tgbotapi.NewMessage(pn.chatID, sb.String())
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	msg.DisableWebPagePreview = true
-
-	if _, err := p.tgAPI.Send(msg); err != nil {
+	req := notifier.Request{
+		ChatID:                pn.chatID,
+		Text:                  sb.String(),
+		ParseMode:             "Markdown",
+		DisableWebPagePreview: true,
+		DedupKey:              fmt.Sprintf("poller:%d:%s", pn.chatID, pn.issueKey),
+		Reason:                "poller:change_detected",
+	}
+	if err := p.notifier.Send(ctx, req); err != nil {
 		p.log.Error().Err(err).Int64("chat_id", pn.chatID).Msg("poller: failed to send notification")
 		return
 	}
@@ -648,8 +657,14 @@ func (p *Poller) handleInvalidToken(ctx context.Context, user *storage.User) {
 	}
 
 	lang := locale.FromString(user.Language)
-	msg := tgbotapi.NewMessage(user.TelegramUserID, locale.T(lang, "disconnect.token_expired"))
-	if _, err := p.tgAPI.Send(msg); err != nil {
+	req := notifier.Request{
+		ChatID:     user.TelegramUserID,
+		TelegramID: user.TelegramUserID,
+		Text:       locale.T(lang, "disconnect.token_expired"),
+		DedupKey:   fmt.Sprintf("poller:token_expired:%d", user.TelegramUserID),
+		Reason:     "poller:token_expired",
+	}
+	if err := p.notifier.Send(ctx, req); err != nil {
 		p.log.Error().Err(err).Int64("user_id", user.TelegramUserID).Msg("poller: failed to notify user about token invalidation")
 	}
 }

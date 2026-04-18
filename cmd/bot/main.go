@@ -29,6 +29,7 @@ import (
 	"SleepJiraBot/internal/webhook"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/notifier"
 	"SleepJiraBot/pkg/preferencesclient"
 	"SleepJiraBot/web"
 )
@@ -206,7 +207,19 @@ func main() {
 		}
 	}
 
-	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, bot.API(), log)
+	// Notifier routes the producer-side Send from poller/scheduler/webhook.
+	// When NOTIFY_VIA_EVENTS=true and events are enabled, messages go out
+	// as NotifyRequested and a separate telegram-svc delivers them; default
+	// is direct-send through this bot's tgbotapi client.
+	var telegramNotifier notifier.Notifier
+	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
+		telegramNotifier = notifier.NewEvent(eventPub, log)
+		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
+	} else {
+		telegramNotifier = notifier.NewDirect(bot.API(), log)
+	}
+
+	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, telegramNotifier, log)
 	sched.SetEventPublisher(eventPub)
 
 	bot.SetOnScheduleChange(func() {
@@ -245,11 +258,11 @@ func main() {
 		dedup = memDedup
 	}
 
-	issuePoller := poller.New(subRepo, userRepo, jiraClient, bot.API(), log, pollInterval, batchWindow, dedup)
+	issuePoller := poller.New(subRepo, userRepo, jiraClient, telegramNotifier, log, pollInterval, batchWindow, dedup)
 	issuePoller.SetEventPublisher(eventPub)
 	bot.SetPollerRef(issuePoller)
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, bot.API(), cfg.JiraWebhookSecret, log, dedup)
+	webhookHandler := webhook.NewHandler(subRepo, userRepo, telegramNotifier, cfg.JiraWebhookSecret, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)
 	bot.SetWebhookStats(webhookRepo, webhookHandler.EventsReceived)
 

@@ -39,6 +39,7 @@ import (
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/notifier"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -143,13 +144,20 @@ func main() {
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
 
-	tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
-	if err != nil {
-		log.Error().Err(err).Msg("scheduler-svc: Telegram API init failed")
-		return
+	var sendNotifier notifier.Notifier
+	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
+		sendNotifier = notifier.NewEvent(eventPub, log)
+		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
+	} else {
+		tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
+		if err != nil {
+			log.Error().Err(err).Msg("scheduler-svc: Telegram API init failed")
+			return
+		}
+		sendNotifier = notifier.NewDirect(tgAPI, log)
 	}
 
-	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, tgAPI, log)
+	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, sendNotifier, log)
 	sched.SetEventPublisher(eventPub)
 
 	healthSrv := &http.Server{

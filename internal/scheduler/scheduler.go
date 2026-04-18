@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
@@ -16,6 +15,7 @@ import (
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/storage"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/notifier"
 )
 
 const (
@@ -28,7 +28,7 @@ type Scheduler struct {
 	scheduleRepo *storage.ScheduleRepo
 	userRepo     *storage.UserRepo
 	jiraClient   *jira.Client
-	tgAPI        *tgbotapi.BotAPI
+	notifier     notifier.Notifier
 	log          zerolog.Logger
 	mu           sync.Mutex
 	cancelCtx    context.Context
@@ -36,14 +36,14 @@ type Scheduler struct {
 	pub          eventsv1.Publisher
 }
 
-func New(scheduleRepo *storage.ScheduleRepo, userRepo *storage.UserRepo, jiraClient *jira.Client, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *Scheduler {
+func New(scheduleRepo *storage.ScheduleRepo, userRepo *storage.UserRepo, jiraClient *jira.Client, n notifier.Notifier, log zerolog.Logger) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		cron:         cron.New(),
 		scheduleRepo: scheduleRepo,
 		userRepo:     userRepo,
 		jiraClient:   jiraClient,
-		tgAPI:        tgAPI,
+		notifier:     n,
 		log:          log,
 		cancelCtx:    ctx,
 		cancelFunc:   cancel,
@@ -158,33 +158,45 @@ func (s *Scheduler) executeReport(report storage.ScheduledReport) {
 			Int64("user_id", report.TelegramUserID).
 			Str("report", report.ReportName).
 			Msg("skipping report: user not connected")
-		errMsg := tgbotapi.NewMessage(report.TelegramChatID,
-			locale.T(lang, "report.not_connected", format.EscapeMarkdown(report.ReportName)))
-		errMsg.ParseMode = tgbotapi.ModeMarkdown
-		_, _ = s.tgAPI.Send(errMsg)
+		_ = s.notifier.Send(ctx, notifier.Request{
+			ChatID:     report.TelegramChatID,
+			TelegramID: report.TelegramUserID,
+			Text:       locale.T(lang, "report.not_connected", format.EscapeMarkdown(report.ReportName)),
+			ParseMode:  "Markdown",
+			DedupKey:   fmt.Sprintf("scheduler:not_connected:%s:%d", report.ID.Hex(), time.Now().Unix()),
+			Reason:     "scheduler:not_connected",
+		})
 		return
 	}
 
 	result, err := s.jiraClient.SearchIssues(ctx, user, report.JQL, reportMaxResults)
 	if err != nil {
 		s.log.Error().Err(err).Str("report", report.ReportName).Msg("failed to execute report JQL")
-		errMsg := tgbotapi.NewMessage(report.TelegramChatID,
-			locale.T(lang, "report.failed",
+		if sendErr := s.notifier.Send(ctx, notifier.Request{
+			ChatID:     report.TelegramChatID,
+			TelegramID: report.TelegramUserID,
+			Text: locale.T(lang, "report.failed",
 				format.EscapeMarkdown(report.ReportName),
 				"Jira query failed",
-			))
-		errMsg.ParseMode = tgbotapi.ModeMarkdown
-		if _, sendErr := s.tgAPI.Send(errMsg); sendErr != nil {
+			),
+			ParseMode: "Markdown",
+			DedupKey:  fmt.Sprintf("scheduler:failed:%s:%d", report.ID.Hex(), time.Now().Unix()),
+			Reason:    "scheduler:query_failed",
+		}); sendErr != nil {
 			s.log.Error().Err(sendErr).Msg("failed to send report error notification")
 		}
 		return
 	}
 
 	text := s.formatReport(lang, &report, result)
-	msg := tgbotapi.NewMessage(report.TelegramChatID, text)
-	msg.ParseMode = tgbotapi.ModeMarkdown
-
-	if _, err := s.tgAPI.Send(msg); err != nil {
+	if err := s.notifier.Send(ctx, notifier.Request{
+		ChatID:     report.TelegramChatID,
+		TelegramID: report.TelegramUserID,
+		Text:       text,
+		ParseMode:  "Markdown",
+		DedupKey:   fmt.Sprintf("scheduler:report:%s:%d", report.ID.Hex(), time.Now().Unix()),
+		Reason:     "scheduler:report",
+	}); err != nil {
 		s.log.Error().Err(err).Int64("chat_id", report.TelegramChatID).Msg("failed to send report")
 	}
 }
