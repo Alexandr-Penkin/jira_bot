@@ -17,16 +17,18 @@ func TestNewHTTPClient_EmptyProxyReturnsPlainClient(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, c)
 	assert.Equal(t, 3*time.Second, c.Timeout)
-	assert.Nil(t, c.Transport, "no proxy must leave Transport at Go default (nil)")
+	// Transport is wrapped with otelhttp for outbound client spans; the
+	// wrapper is a no-op when the global tracer provider is no-op.
+	assert.NotNil(t, c.Transport, "Transport should be the otelhttp-wrapped default")
 }
 
 func TestNewHTTPClient_Socks5Succeeds(t *testing.T) {
 	// The SOCKS5 dialer doesn't verify reachability at construction time,
-	// so any syntactically valid URL builds an alternatingTransport.
+	// so any syntactically valid URL builds an alternatingTransport wrapped
+	// by otelhttp.
 	c, err := NewHTTPClient("socks5://127.0.0.1:1080", 5*time.Second)
 	require.NoError(t, err)
-	_, ok := c.Transport.(*alternatingTransport)
-	assert.True(t, ok, "transport must be alternatingTransport for socks5")
+	assert.NotNil(t, c.Transport)
 }
 
 func TestNewHTTPClient_Socks5WithCredentials(t *testing.T) {

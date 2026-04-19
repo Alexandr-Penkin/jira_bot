@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/net/proxy"
 )
 
@@ -23,7 +24,7 @@ import (
 // retries alternate between "with proxy" and "without proxy".
 func NewHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error) {
 	if proxyURL == "" {
-		return &http.Client{Timeout: timeout}, nil
+		return &http.Client{Timeout: timeout, Transport: otelhttp.NewTransport(http.DefaultTransport)}, nil
 	}
 
 	proxyTransport, err := newProxyTransport(proxyURL)
@@ -46,7 +47,7 @@ func NewHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error)
 	// Start with proxy.
 	alt.useProxy.Store(true)
 
-	return &http.Client{Timeout: timeout, Transport: alt}, nil
+	return &http.Client{Timeout: timeout, Transport: otelhttp.NewTransport(alt)}, nil
 }
 
 func newProxyTransport(proxyURL string) (http.RoundTripper, error) {

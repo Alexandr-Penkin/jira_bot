@@ -9,6 +9,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+
+	"SleepJiraBot/pkg/telemetry"
 )
 
 type MongoDB struct {
@@ -18,7 +20,7 @@ type MongoDB struct {
 }
 
 func ConnectMongo(ctx context.Context, uri, dbName string, log zerolog.Logger) (*MongoDB, error) {
-	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	client, err := mongo.Connect(options.Client().ApplyURI(uri).SetMonitor(telemetry.MongoCommandMonitor()))
 	if err != nil {
 		return nil, fmt.Errorf("mongo connect: %w", err)
 	}
