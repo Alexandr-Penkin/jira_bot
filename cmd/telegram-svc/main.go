@@ -29,7 +29,9 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 
 	"SleepJiraBot/internal/config"
@@ -40,7 +42,25 @@ import (
 	"SleepJiraBot/pkg/telemetry"
 )
 
-var tracer = otel.Tracer("SleepJiraBot/cmd/telegram-svc")
+var (
+	tracer = otel.Tracer("SleepJiraBot/cmd/telegram-svc")
+	meter  = otel.Meter("SleepJiraBot/cmd/telegram-svc")
+
+	deliveryCount    metric.Int64Counter
+	deliveryDuration metric.Float64Histogram
+)
+
+func init() {
+	deliveryCount, _ = meter.Int64Counter(
+		"sjb.notify.delivered",
+		metric.WithDescription("Count of Telegram delivery attempts, labelled by outcome"),
+	)
+	deliveryDuration, _ = meter.Float64Histogram(
+		"sjb.notify.delivery.duration",
+		metric.WithDescription("Duration of Telegram send calls"),
+		metric.WithUnit("ms"),
+	)
+}
 
 const (
 	fetchBatch   = 10
@@ -225,10 +245,13 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 	}
 	tg.DisableWebPagePreview = req.DisableWebPagePreview
 
+	sendStart := time.Now()
 	sent, err := tgAPI.Send(tg)
+	deliveryDuration.Record(ctx, float64(time.Since(sendStart).Microseconds())/1000.0)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "telegram send failed")
+		deliveryCount.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "failed")))
 		log.Error().Err(err).Int64("chat_id", req.ChatID).Str("reason", req.Reason).Msg("telegram-svc: Telegram send failed; will retry")
 		_ = pub.Publish(ctx, eventsv1.NotifyFailed{
 			ChatID:     req.ChatID,
@@ -242,6 +265,7 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 		return
 	}
 
+	deliveryCount.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "delivered")))
 	_ = pub.Publish(ctx, eventsv1.NotifyDelivered{
 		ChatID:        req.ChatID,
 		TelegramID:    req.TelegramID,

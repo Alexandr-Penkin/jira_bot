@@ -1,26 +1,29 @@
 // Package telemetry wires the OpenTelemetry SDK for the SleepJiraBot
-// microservices. Phase 7a ships only the bootstrap — no spans are
-// created yet; the goal is that every service has a configured
-// TracerProvider and TextMapPropagator so downstream phases can sprinkle
-// `otel.Tracer("sjb/<component>").Start(...)` without another round of
-// plumbing.
+// microservices. The Init helper installs a TracerProvider, a
+// MeterProvider, and the W3C TraceContext + Baggage propagator so
+// downstream code can call `otel.Tracer("...")` / `otel.Meter("...")`
+// unconditionally.
 //
 // Behaviour is gated entirely on OTEL_EXPORTER_OTLP_ENDPOINT. Empty or
-// unset → a no-op TracerProvider is installed and the returned shutdown
-// is a no-op. Non-empty → an OTLP/gRPC exporter is dialled, a batching
-// SpanProcessor is attached, and the shutdown function flushes it. The
+// unset → no providers are installed (the global otel no-ops take over)
+// and the returned shutdown is a no-op. Non-empty → OTLP/gRPC exporters
+// are dialled for both traces (batching, 5s) and metrics (periodic reader,
+// 30s), and the shutdown function flushes them in parallel. The
 // zero-config path keeps the default monolith behaviour byte-identical.
 package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
@@ -87,26 +90,54 @@ func Init(ctx context.Context, cfg Config, log zerolog.Logger) (ShutdownFunc, er
 		opts = append(opts, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(nil)))
 	}
 
-	exporter, err := otlptracegrpc.New(ctx, opts...)
+	traceExporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("telemetry: create OTLP exporter: %w", err)
+		return nil, fmt.Errorf("telemetry: create OTLP trace exporter: %w", err)
 	}
 
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter,
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(traceExporter,
 			sdktrace.WithBatchTimeout(5*time.Second),
 		),
 		sdktrace.WithResource(res),
 	)
-	otel.SetTracerProvider(provider)
+	otel.SetTracerProvider(tracerProvider)
+
+	metricOpts := []otlpmetricgrpc.Option{
+		otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
+	}
+	if cfg.Insecure {
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+	} else {
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithTLSCredentials(credentials.NewTLS(nil)))
+	}
+
+	metricExporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
+	if err != nil {
+		// Trace provider is already installed; best-effort shutdown so the
+		// error path does not leak the exporter goroutine.
+		_ = tracerProvider.Shutdown(ctx)
+		return nil, fmt.Errorf("telemetry: create OTLP metric exporter: %w", err)
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter,
+			sdkmetric.WithInterval(30*time.Second),
+		)),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetMeterProvider(meterProvider)
 
 	log.Info().
 		Str("endpoint", cfg.Endpoint).
 		Str("service", serviceName).
 		Bool("insecure", cfg.Insecure).
-		Msg("telemetry: OTLP tracer provider installed")
+		Msg("telemetry: OTLP tracer + meter providers installed")
 
 	return func(shutdownCtx context.Context) error {
-		return provider.Shutdown(shutdownCtx)
+		return errors.Join(
+			tracerProvider.Shutdown(shutdownCtx),
+			meterProvider.Shutdown(shutdownCtx),
+		)
 	}, nil
 }

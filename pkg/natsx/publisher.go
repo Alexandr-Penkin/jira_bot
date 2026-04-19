@@ -15,14 +15,45 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 	"go.opentelemetry.io/otel/trace"
 
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
-var tracer = otel.Tracer("SleepJiraBot/pkg/natsx")
+var (
+	tracer = otel.Tracer("SleepJiraBot/pkg/natsx")
+	meter  = otel.Meter("SleepJiraBot/pkg/natsx")
+
+	publishCount    metric.Int64Counter
+	publishDuration metric.Float64Histogram
+	ackFailures     metric.Int64Counter
+	ackDuration     metric.Float64Histogram
+)
+
+func init() {
+	publishCount, _ = meter.Int64Counter(
+		"sjb.events.published",
+		metric.WithDescription("Count of JetStream publish calls, labelled by subject and outcome"),
+	)
+	publishDuration, _ = meter.Float64Histogram(
+		"sjb.events.publish.duration",
+		metric.WithDescription("Duration of JetStream publish calls (marshal + PublishMsgAsync)"),
+		metric.WithUnit("ms"),
+	)
+	ackFailures, _ = meter.Int64Counter(
+		"sjb.events.ack_failed",
+		metric.WithDescription("Count of async publish ack failures observed by the producer"),
+	)
+	ackDuration, _ = meter.Float64Histogram(
+		"sjb.events.ack.duration",
+		metric.WithDescription("Time from PublishMsgAsync dispatch to JetStream ack (ok or err)"),
+		metric.WithUnit("ms"),
+	)
+}
 
 // JetStreamPublisher publishes envelope-wrapped events with the event's
 // idempotency key as the Nats-Msg-Id header, letting JetStream dedupe
@@ -130,25 +161,34 @@ func (p *JetStreamPublisher) EnsureStreams(streams []StreamConfig) error {
 // into the outgoing NATS headers so consumers downstream (telegram-svc
 // et al.) can continue the trace via ExtractContext.
 func (p *JetStreamPublisher) Publish(ctx context.Context, event eventsv1.Event, traceID string) error {
-	ctx, span := tracer.Start(ctx, "natsx.publish "+event.Subject(),
+	start := time.Now()
+	subject := event.Subject()
+	subjectAttr := attribute.String("subject", subject)
+
+	ctx, span := tracer.Start(ctx, "natsx.publish "+subject,
 		trace.WithSpanKind(trace.SpanKindProducer),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String("nats"),
-			semconv.MessagingDestinationName(event.Subject()),
+			semconv.MessagingDestinationName(subject),
 			semconv.MessagingOperationTypePublish,
 			semconv.MessagingMessageID(event.IdempotencyKey()),
 		),
 	)
-	defer span.End()
+	defer func() {
+		publishDuration.Record(ctx, float64(time.Since(start).Microseconds())/1000.0,
+			metric.WithAttributes(subjectAttr))
+		span.End()
+	}()
 
 	data, err := eventsv1.Marshal(event, traceID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "marshal failed")
-		return fmt.Errorf("natsx: marshal %s: %w", event.Subject(), err)
+		publishCount.Add(ctx, 1, metric.WithAttributes(subjectAttr, attribute.String("outcome", "marshal_error")))
+		return fmt.Errorf("natsx: marshal %s: %w", subject, err)
 	}
 	msg := &nats.Msg{
-		Subject: event.Subject(),
+		Subject: subject,
 		Data:    data,
 		Header:  nats.Header{},
 	}
@@ -165,14 +205,28 @@ func (p *JetStreamPublisher) Publish(ctx context.Context, event eventsv1.Event, 
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "publish failed")
-		return fmt.Errorf("natsx: publish %s: %w", event.Subject(), err)
+		publishCount.Add(ctx, 1, metric.WithAttributes(subjectAttr, attribute.String("outcome", "publish_error")))
+		return fmt.Errorf("natsx: publish %s: %w", subject, err)
 	}
+	publishCount.Add(ctx, 1, metric.WithAttributes(subjectAttr, attribute.String("outcome", "queued")))
+	// Detach from the caller's ctx: the goroutine outlives the request
+	// context in the common case (caller returns, ack arrives later). We
+	// still want the metric increment on ack failure to land.
+	ackCtx := context.WithoutCancel(ctx)
+	ackStart := time.Now()
 	go func() {
+		recordAck := func(outcome string) {
+			ackDuration.Record(ackCtx, float64(time.Since(ackStart).Microseconds())/1000.0,
+				metric.WithAttributes(subjectAttr, attribute.String("outcome", outcome)))
+		}
 		select {
 		case <-fut.Ok():
+			recordAck("ok")
 		case err := <-fut.Err():
-			p.log.Warn().Err(err).Str("subject", event.Subject()).Msg("jetstream publish ack failed")
-		case <-ctx.Done():
+			recordAck("error")
+			ackFailures.Add(ackCtx, 1, metric.WithAttributes(subjectAttr))
+			p.log.Warn().Err(err).Str("subject", subject).Msg("jetstream publish ack failed")
+		case <-ackCtx.Done():
 		}
 	}()
 	return nil
