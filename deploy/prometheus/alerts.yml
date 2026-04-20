@@ -1,0 +1,199 @@
+# SleepJiraBot — Prometheus alert rules for the DDD event pipeline.
+#
+# Import via prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/sleepjirabot/alerts.yml
+#
+# All rules assume the OTel→Prometheus naming convention used by the
+# Grafana dashboard (counters gain `_total`, ms histograms expose
+# `_milliseconds_bucket`). The labels `subject`, `outcome`, `command`,
+# `service` flow from the OTel resource + instrument attributes.
+#
+# Thresholds are deliberately conservative — real prod values should be
+# tuned once per-service baselines settle. The rule *shapes* (queries
+# and `for` windows) are the contract; the numbers are parameters.
+
+groups:
+  - name: sjb-events-publisher
+    interval: 30s
+    rules:
+      - alert: SJBPublishErrorRateHigh
+        expr: |
+          sum by (subject) (rate(sjb_events_published_total{outcome!="queued"}[5m]))
+            / clamp_min(sum by (subject) (rate(sjb_events_published_total[5m])), 0.001)
+            > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: events-publisher
+        annotations:
+          summary: "Publish error rate > 5% for {{ $labels.subject }}"
+          description: |
+            More than 5% of publish calls for {{ $labels.subject }} have
+            failed before enqueue (marshal_error or publish_error) for
+            10 minutes. Check NATS connectivity and producer logs.
+
+      - alert: SJBAckFailuresElevated
+        expr: sum by (subject) (rate(sjb_events_ack_failed_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: events-publisher
+        annotations:
+          summary: "JetStream ack failures on {{ $labels.subject }}"
+          description: |
+            JetStream is rejecting enqueued messages on {{ $labels.subject }}
+            at > 0.1/s for 10 minutes. Check stream health, retention,
+            and duplicate-window config.
+
+      - alert: SJBAckDurationHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (subject, le) (rate(sjb_events_ack_duration_milliseconds_bucket[10m]))
+          ) > 2000
+        for: 15m
+        labels:
+          severity: warning
+          component: events-publisher
+        annotations:
+          summary: "p95 ack duration > 2s for {{ $labels.subject }}"
+          description: |
+            JetStream is slow to acknowledge published messages on
+            {{ $labels.subject }} (p95 > 2s for 15 minutes). Likely
+            storage/IO saturation on the NATS cluster.
+
+  - name: sjb-events-consumer
+    interval: 30s
+    rules:
+      # Event-lag: publish rate substantially exceeds consume rate →
+      # consumer is falling behind and the stream is growing. Ratio
+      # formulation lets the rule generalise across traffic levels.
+      - alert: SJBEventLagGrowing
+        expr: |
+          sum by (subject) (rate(sjb_events_published_total{outcome="queued"}[5m]))
+            - sum by (subject) (rate(sjb_events_consumed_total[5m]))
+            > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: events-consumer
+        annotations:
+          summary: "Consumer lag on {{ $labels.subject }}"
+          description: |
+            Publish rate exceeds consume rate by > 1 msg/s on
+            {{ $labels.subject }} for 10 minutes. Consumers may be
+            crashed, slow, or scaled below capacity.
+
+      - alert: SJBConsumerNakSpike
+        expr: |
+          sum by (subject) (rate(sjb_events_consumed_total{outcome="nak"}[5m]))
+            / clamp_min(sum by (subject) (rate(sjb_events_consumed_total[5m])), 0.001)
+            > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          component: events-consumer
+        annotations:
+          summary: "NAK rate > 10% on {{ $labels.subject }}"
+          description: |
+            A consumer is repeatedly nak-ing messages on
+            {{ $labels.subject }}. At MaxDeliver=5 these will eventually
+            reach terminal state. Inspect downstream dependencies.
+
+  - name: sjb-notify-delivery
+    interval: 30s
+    rules:
+      - alert: SJBTelegramDeliveryFailureRate
+        expr: |
+          sum(rate(sjb_notify_delivered_total{outcome="failed"}[5m]))
+            / clamp_min(sum(rate(sjb_notify_delivered_total[5m])), 0.001)
+            > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: telegram-svc
+        annotations:
+          summary: "Telegram delivery failure rate > 5%"
+          description: |
+            telegram-svc is failing > 5% of Telegram send calls for
+            10 minutes. Check Telegram API status, rate limits, and
+            outbound connectivity.
+
+      - alert: SJBTelegramDeliveryDurationHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(sjb_notify_delivery_duration_milliseconds_bucket[10m]))
+          ) > 5000
+        for: 15m
+        labels:
+          severity: warning
+          component: telegram-svc
+        annotations:
+          summary: "Telegram send p95 > 5s"
+          description: |
+            Telegram API responses are slow (p95 > 5s for 15 minutes).
+            Confirm upstream latency from Telegram side vs. local
+            proxy/egress.
+
+  - name: sjb-mongo
+    interval: 30s
+    rules:
+      - alert: SJBMongoCommandErrorRate
+        expr: |
+          sum by (command) (rate(sjb_mongo_command_count_total{outcome="error"}[5m]))
+            / clamp_min(sum by (command) (rate(sjb_mongo_command_count_total[5m])), 0.001)
+            > 0.02
+        for: 10m
+        labels:
+          severity: warning
+          component: mongo
+        annotations:
+          summary: "Mongo command error rate > 2% for {{ $labels.command }}"
+          description: |
+            MongoDB driver is returning errors for {{ $labels.command }}
+            at > 2% for 10 minutes. Check cluster health and indexes.
+
+      - alert: SJBMongoCommandDurationHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (command, le) (rate(sjb_mongo_command_duration_milliseconds_bucket[10m]))
+          ) > 500
+        for: 15m
+        labels:
+          severity: warning
+          component: mongo
+        annotations:
+          summary: "Mongo p95 > 500ms for {{ $labels.command }}"
+          description: |
+            {{ $labels.command }} command latency p95 is > 500ms for 15
+            minutes. Likely missing index or collection growth past the
+            working-set RAM.
+
+  - name: sjb-identity-lease
+    interval: 30s
+    rules:
+      # identity-svc HTTP surface is wrapped by otelhttp, which auto-emits
+      # http.server.request.duration. Non-2xx responses from the lease
+      # endpoint indicate refresh failures that downstream services
+      # (poller/scheduler/webhook) will turn into missed work.
+      - alert: SJBIdentityLeaseErrorRate
+        expr: |
+          sum(rate(http_server_request_duration_milliseconds_count{
+            http_route="/internal/lease",
+            http_response_status_code!~"2.."
+          }[5m]))
+            / clamp_min(sum(rate(http_server_request_duration_milliseconds_count{
+                http_route="/internal/lease"
+              }[5m])), 0.001)
+            > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: identity-svc
+        annotations:
+          summary: "identity-svc lease error rate > 5%"
+          description: |
+            > 5% of /internal/lease calls have returned non-2xx for 10
+            minutes. Likely Atlassian refresh failures or database
+            unavailability — downstream services will miss polls until
+            cleared.

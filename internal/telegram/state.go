@@ -44,8 +44,10 @@ func (sm *stateManager) StartCleanup(ctx context.Context) { sm.store.StartCleanu
 func (sm *stateManager) Set(userID int64, step string, data map[string]string) {
 	sm.store.Set(userID, step, data)
 }
-func (sm *stateManager) Get(userID int64) (string, map[string]string) { return sm.store.Get(userID) }
-func (sm *stateManager) Clear(userID int64)                           { sm.store.Clear(userID) }
+func (sm *stateManager) Get(userID int64) (step string, data map[string]string) {
+	return sm.store.Get(userID)
+}
+func (sm *stateManager) Clear(userID int64) { sm.store.Clear(userID) }
 
 // memoryStateStore is the original in-process map. Values expire
 // after stateMaxAge; a periodic goroutine started by StartCleanup
@@ -92,7 +94,7 @@ func (s *memoryStateStore) Set(userID int64, step string, data map[string]string
 	s.states[userID] = &userState{step: step, data: data, createdAt: time.Now()}
 }
 
-func (s *memoryStateStore) Get(userID int64) (string, map[string]string) {
+func (s *memoryStateStore) Get(userID int64) (step string, data map[string]string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	st, ok := s.states[userID]

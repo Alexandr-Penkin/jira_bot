@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	identityv1 "SleepJiraBot/pkg/identityv1"
 )
 
@@ -53,7 +55,14 @@ func New(baseURL, authToken string, httpClient *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("identityclient: invalid baseURL: %w", err)
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: DefaultTimeout}
+		// Wrap the default transport with otelhttp so identity-svc calls
+		// show up as child spans of the caller's request context and
+		// surface in the otelhttp client-duration histogram. Callers that
+		// pass their own client own their instrumentation.
+		httpClient = &http.Client{
+			Timeout:   DefaultTimeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		}
 	}
 	return &Client{
 		baseURL:   strings.TrimRight(baseURL, "/"),

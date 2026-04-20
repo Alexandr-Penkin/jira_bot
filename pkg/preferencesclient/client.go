@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	preferencesv1 "SleepJiraBot/pkg/preferencesv1"
 )
 
@@ -40,7 +42,14 @@ func New(baseURL, authToken string, httpClient *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("preferencesclient: invalid baseURL: %w", err)
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: DefaultTimeout}
+		// Wrap the default transport with otelhttp so preferences-svc
+		// calls show up as child spans of the caller's request context
+		// and feed the otelhttp client-duration histogram. Callers that
+		// pass their own client own their instrumentation.
+		httpClient = &http.Client{
+			Timeout:   DefaultTimeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		}
 	}
 	return &Client{
 		baseURL:   strings.TrimRight(baseURL, "/"),
@@ -51,7 +60,7 @@ func New(baseURL, authToken string, httpClient *http.Client) (*Client, error) {
 
 func (c *Client) Get(ctx context.Context, telegramID int64) (*preferencesv1.Preferences, error) {
 	u := c.baseURL + preferencesv1.GetPath + "?telegram_id=" + strconv.FormatInt(telegramID, 10)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return nil, err
 	}

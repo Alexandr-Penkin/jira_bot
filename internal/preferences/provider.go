@@ -21,6 +21,12 @@ import (
 
 // Provider is the minimal surface callers need. LocalProvider is the
 // only impl for now; a remote HTTP client will live in pkg/preferencesclient.
+// The method set mirrors UserStore on purpose — Provider is the
+// caller-facing seam, UserStore is the storage-facing seam, and they stay
+// in lock-step so the LocalProvider can forward calls 1-to-1 without a
+// translation layer.
+//
+//nolint:dupl // structural twin of UserStore below; see doc-comment above.
 type Provider interface {
 	Get(ctx context.Context, telegramID int64) (*preferencesv1.Preferences, error)
 	SetLanguage(ctx context.Context, telegramID int64, lang string) error
@@ -35,6 +41,8 @@ type Provider interface {
 
 // UserStore is the UserRepo surface LocalProvider touches. Kept as an
 // interface so tests can inject a fake without Mongo.
+//
+//nolint:dupl // structural twin of Provider above; intentional, see doc.
 type UserStore interface {
 	GetByTelegramID(ctx context.Context, telegramUserID int64) (*storage.User, error)
 	SetLanguage(ctx context.Context, telegramUserID int64, lang string) error

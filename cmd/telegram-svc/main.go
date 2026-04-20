@@ -215,11 +215,16 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 	)
 	defer span.End()
 
+	outcome := natsx.OutcomeAck
+	consumeStart := time.Now()
+	defer func() { natsx.ObserveConsume(ctx, msg.Subject, &outcome, consumeStart) }()
+
 	var env eventsv1.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "malformed envelope")
 		log.Error().Err(err).Msg("telegram-svc: malformed envelope; terminating message")
+		outcome = natsx.OutcomeTerm
 		_ = msg.Term()
 		return
 	}
@@ -228,6 +233,7 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "malformed payload")
 		log.Error().Err(err).Msg("telegram-svc: malformed NotifyRequested payload; terminating message")
+		outcome = natsx.OutcomeTerm
 		_ = msg.Term()
 		return
 	}
@@ -235,6 +241,7 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 	if req.ChatID == 0 || req.Text == "" {
 		span.SetStatus(codes.Error, "empty notification")
 		log.Warn().Int64("chat_id", req.ChatID).Msg("telegram-svc: rejecting empty notification")
+		outcome = natsx.OutcomeTerm
 		_ = msg.Term()
 		return
 	}
@@ -261,6 +268,7 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 			Retryable:  true,
 			FailedAt:   time.Now().UnixMilli(),
 		}, env.TraceID)
+		outcome = natsx.OutcomeNak
 		_ = msg.NakWithDelay(nakBackoff)
 		return
 	}

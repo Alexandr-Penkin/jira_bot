@@ -77,7 +77,7 @@ func (s *mongoStateStore) Set(userID int64, step string, data map[string]string)
 	}
 }
 
-func (s *mongoStateStore) Get(userID int64) (string, map[string]string) {
+func (s *mongoStateStore) Get(userID int64) (step string, data map[string]string) {
 	ctx, cancel := context.WithTimeout(context.Background(), stateMongoOpTimeout)
 	defer cancel()
 
