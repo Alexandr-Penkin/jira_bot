@@ -220,7 +220,7 @@ func main() {
 		}
 	}
 
-	if cfg.PersistConversationStates {
+	if cfg.PersistConversationStates && cfg.EmbedTelegramUpdates {
 		if err := bot.UseMongoStateStore(ctx, mongo.Database(), log); err != nil {
 			log.Error().Err(err).Msg("failed to enable Mongo FSM store; falling back to in-memory")
 		} else {
@@ -326,11 +326,15 @@ func main() {
 		log.Info().Msg("polling handled externally; monolith poller disabled")
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		bot.Start(ctx)
-	}()
+	if cfg.EmbedTelegramUpdates {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bot.Start(ctx)
+		}()
+	} else {
+		log.Info().Msg("telegram update-handling handled externally; monolith long-polling disabled")
+	}
 
 	if cfg.EmbedScheduler {
 		wg.Add(1)

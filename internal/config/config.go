@@ -98,6 +98,25 @@ type Config struct {
 	// behaviour.
 	PersistConversationStates bool
 
+	// Phase 6b: EmbedTelegramUpdates controls whether the monolith runs
+	// the Telegram long-polling receive loop (`bot.Start`). Default true
+	// preserves current behaviour. When false, the monolith still
+	// constructs a `*telegram.Bot` so `bot.API()` stays available for the
+	// OAuth callback-server's "you connected" messages and for the
+	// DirectNotifier fallback, but no updates are consumed — a
+	// telegram-svc running with TELEGRAM_SVC_UPDATES=true is expected to
+	// own update handling. Only one process may call getUpdates at a time;
+	// running both leads to interleaved updates and FSM corruption.
+	EmbedTelegramUpdates bool
+
+	// Phase 6b: TelegramSvcUpdates flips cmd/telegram-svc from a
+	// notify-consumer-only role into a full update handler. Default
+	// false. When true, telegram-svc constructs Mongo, Jira, preferences,
+	// webhook, and OAuth dependencies and starts its own Telegram
+	// long-polling loop using the shared `internal/telegram` code. Pair
+	// with EMBED_TELEGRAM_UPDATES=false on the monolith.
+	TelegramSvcUpdates bool
+
 	// Phase 7a: OpenTelemetry bootstrap. When OtelExporterEndpoint is
 	// non-empty, services install an OTLP/gRPC tracer provider with the
 	// given endpoint (e.g. "otel-collector:4317"). Empty disables the
@@ -134,6 +153,7 @@ func Load() (*Config, error) {
 		EmbedPoller:          true,
 		EmbedScheduler:       true,
 		EmbedPreferences:     true,
+		EmbedTelegramUpdates: true,
 		PreferencesSvcURL:    os.Getenv("PREFERENCES_SVC_URL"),
 		PreferencesSvcAddr:   getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
 		DedupRedisURL:        os.Getenv("DEDUP_REDIS_URL"),
@@ -205,6 +225,22 @@ func Load() (*Config, error) {
 			return nil, errors.New("NOTIFY_VIA_EVENTS must be a boolean (true/false/1/0)")
 		}
 		cfg.NotifyViaEvents = enabled
+	}
+
+	if v := os.Getenv("EMBED_TELEGRAM_UPDATES"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("EMBED_TELEGRAM_UPDATES must be a boolean (true/false/1/0)")
+		}
+		cfg.EmbedTelegramUpdates = enabled
+	}
+
+	if v := os.Getenv("TELEGRAM_SVC_UPDATES"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("TELEGRAM_SVC_UPDATES must be a boolean (true/false/1/0)")
+		}
+		cfg.TelegramSvcUpdates = enabled
 	}
 
 	if cfg.TelegramToken == "" {

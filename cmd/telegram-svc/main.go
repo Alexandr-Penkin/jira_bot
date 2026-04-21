@@ -1,20 +1,33 @@
-// Command telegram-svc is the Phase-6a slice of the SleepJiraBot DDD
-// split. It owns a single, narrow concern: consume NotifyRequested
-// events from JetStream and deliver them to Telegram.
+// Command telegram-svc owns the Telegram-facing slice of the
+// SleepJiraBot DDD split.
 //
-// Producers (bot, poller, scheduler, webhook) set NOTIFY_VIA_EVENTS=true
-// to route their Send calls through the event bus instead of calling
-// tgbotapi directly. telegram-svc is the only subscriber of
-// sjb.notify.requested.v1 — it ack's on successful send, nak's with a
-// short backoff on Telegram API errors (at most 5 deliveries before the
-// message is dropped into JetStream's terminal state).
+// Phase 6a — NotifyRequested consumer. Producers (bot, poller,
+// scheduler, webhook) set NOTIFY_VIA_EVENTS=true to route their Send
+// calls through the event bus instead of calling tgbotapi directly.
+// telegram-svc is the only subscriber of sjb.notify.requested.v1 —
+// ack on success, nak-with-delay on Telegram API errors (at most
+// ~5 deliveries before the message is dropped into JetStream's
+// terminal state).
 //
-// Handler-side concerns (wizards, FSM, commands) stay in cmd/bot for
-// now. Phase 6b will move the update-handling path here too.
+// Phase 6b — opt-in update handling. When TELEGRAM_SVC_UPDATES=true,
+// the service additionally constructs the full dependency graph
+// (Mongo repos, OAuth, Jira client, preferences provider, webhook
+// manager) and runs `telegram.Bot.Start(ctx)` — the same long-poll
+// Handler code the monolith uses, just hosted here. Only one process
+// may call getUpdates at a time, so the monolith must be started with
+// EMBED_TELEGRAM_UPDATES=false when this flag is on.
+//
+// Known limitation in Phase 6b: the OAuth multi-site selection flow
+// relies on an in-memory pending-site map inside the monolith's
+// CallbackServer. When updates run here but the OAuth callback still
+// runs on cmd/bot, clicking the site-selection button reaches this
+// process's Handler with a nil callbackServer and degrades to a
+// generic error. Single-site OAuth is unaffected.
 package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -35,10 +48,18 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 
 	"SleepJiraBot/internal/config"
+	"SleepJiraBot/internal/crypto"
+	"SleepJiraBot/internal/identity"
+	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
+	"SleepJiraBot/internal/preferences"
 	"SleepJiraBot/internal/proxy"
+	"SleepJiraBot/internal/storage"
+	"SleepJiraBot/internal/telegram"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
+	"SleepJiraBot/pkg/preferencesclient"
 	"SleepJiraBot/pkg/telemetry"
 )
 
@@ -165,6 +186,26 @@ func main() {
 		runConsumer(ctx, sub, tgAPI, jsPub, log)
 	}()
 
+	// Phase 6b: opt-in update handling. Constructs the full dependency
+	// graph the monolith builds for its Handler and starts the same
+	// long-poll receive loop in this process. Only enabled when
+	// TELEGRAM_SVC_UPDATES=true; the monolith must be run with
+	// EMBED_TELEGRAM_UPDATES=false so updates reach a single consumer.
+	if cfg.TelegramSvcUpdates {
+		bot, cleanup, err := startUpdateHandler(ctx, cfg, tgAPI, httpClient, jsPub, log)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to start telegram-svc update handler")
+			cancel()
+		} else {
+			defer cleanup()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				bot.Start(ctx)
+			}()
+		}
+	}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -282,6 +323,132 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 		DeliveredAt:   time.Now().UnixMilli(),
 	}, env.TraceID)
 	_ = msg.Ack()
+}
+
+// startUpdateHandler builds the full dependency graph needed by
+// `internal/telegram` handlers and returns a ready-to-Start Bot plus a
+// cleanup hook (Mongo disconnect). Mirrors the monolith's wiring in
+// cmd/bot/main.go so Phase 6b is behavior-equivalent — only the
+// hosting process changes.
+func startUpdateHandler(
+	ctx context.Context,
+	cfg *config.Config,
+	tgAPI *tgbotapi.BotAPI,
+	httpClient *http.Client,
+	eventPub eventsv1.Publisher,
+	log zerolog.Logger,
+) (*telegram.Bot, func(), error) {
+	_ = tgAPI // handler builds its own *tgbotapi.BotAPI via telegram.NewBot
+
+	mongoClient, err := storage.ConnectMongo(ctx, cfg.MongoURI, cfg.MongoDB, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() {
+		disconnectCtx, disconnectCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer disconnectCancel()
+		_ = mongoClient.Disconnect(disconnectCtx)
+	}
+
+	if cfg.EncryptionKey == "" || len(cfg.EncryptionKey) != 64 {
+		cleanup()
+		return nil, nil, errors.New("ENCRYPTION_KEY must be 64 hex characters (32 bytes) for telegram-svc update handling")
+	}
+	encKeyBytes, err := hex.DecodeString(cfg.EncryptionKey)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	enc, err := crypto.NewEncryptor(encKeyBytes)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+
+	userRepo := storage.NewUserRepo(mongoClient.Database(), enc)
+	subRepo := storage.NewSubscriptionRepo(mongoClient.Database())
+	scheduleRepo := storage.NewScheduleRepo(mongoClient.Database())
+	webhookRepo := storage.NewWebhookRepo(mongoClient.Database())
+	templateRepo := storage.NewTemplateRepo(mongoClient.Database())
+
+	subRepo.SetEventPublisher(eventPub)
+	userRepo.SetEventPublisher(eventPub)
+
+	jira.SetHTTPClient(httpClient)
+	oauthCfg := jira.OAuthConfig{
+		ClientID:     cfg.JiraClientID,
+		ClientSecret: cfg.JiraClientSecret,
+		RedirectURI:  cfg.JiraRedirectURI,
+	}
+	oauthClient := jira.NewOAuthClient(oauthCfg, log)
+	oauthClient.StartCleanup(ctx)
+	jiraClient := jira.NewClient(oauthClient, userRepo, log)
+	jiraClient.SetEventPublisher(eventPub)
+	jiraClient.StartCleanup(ctx)
+
+	// Route token refresh through identity-svc when IDENTITY_SVC_URL is
+	// set so there is a single refresh owner across the fleet. Fall
+	// back to an in-process LocalProvider for single-process dev.
+	var tokenProvider jira.TokenProvider
+	if cfg.IdentitySvcURL != "" {
+		remote, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		tokenProvider = remote
+		log.Info().Str("url", cfg.IdentitySvcURL).Msg("telegram-svc: using remote identity-svc for token lease")
+	} else {
+		local := identity.NewLocalProvider(userRepo, oauthClient, log)
+		local.SetEventPublisher(eventPub)
+		tokenProvider = local
+	}
+	jiraClient.SetTokenProvider(tokenProvider)
+
+	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
+
+	var prefsProvider preferences.Provider
+	if cfg.PreferencesSvcURL != "" && !cfg.EmbedPreferences {
+		remote, err := preferencesclient.New(cfg.PreferencesSvcURL, cfg.InternalAuthToken, nil)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		prefsProvider = remote
+		log.Info().Str("url", cfg.PreferencesSvcURL).Msg("telegram-svc: routing preferences through remote preferences-svc")
+	} else {
+		prefsProvider = preferences.NewLocalProvider(userRepo, log)
+	}
+
+	bot, err := telegram.NewBot(
+		cfg.TelegramToken,
+		oauthClient,
+		jiraClient,
+		userRepo,
+		prefsProvider,
+		subRepo,
+		scheduleRepo,
+		webhookMgr,
+		templateRepo,
+		log,
+		cfg.AdminTelegramID,
+		httpClient,
+	)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+
+	if cfg.PersistConversationStates {
+		if err := bot.UseMongoStateStore(ctx, mongoClient.Database(), log); err != nil {
+			log.Error().Err(err).Msg("telegram-svc: failed to enable Mongo FSM store; falling back to in-memory")
+		} else {
+			log.Info().Msg("telegram-svc: FSM persisted to Mongo (conversation_states)")
+		}
+	}
+
+	log.Info().Msg("telegram-svc: update handler wired; starting long-poll loop")
+	return bot, cleanup, nil
 }
 
 func healthHandler() http.Handler {
