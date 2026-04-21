@@ -15,28 +15,30 @@ import (
 )
 
 type User struct {
-	ID                 bson.ObjectID `bson:"_id,omitempty"`
-	TelegramUserID     int64         `bson:"telegram_user_id"`
-	JiraCloudID        string        `bson:"jira_cloud_id,omitempty"`
-	JiraAccountID      string        `bson:"jira_account_id,omitempty"`
-	JiraDisplayName    string        `bson:"jira_display_name,omitempty"`
-	JiraSiteURL        string        `bson:"jira_site_url,omitempty"`
-	AccessToken        string        `bson:"access_token,omitempty"`
-	RefreshToken       string        `bson:"refresh_token,omitempty"`
-	TokenExpiresAt     time.Time     `bson:"token_expires_at,omitempty"`
-	Language           string        `bson:"language,omitempty"`
-	DefaultProject     string        `bson:"default_project,omitempty"`
-	DefaultBoardID     int           `bson:"default_board_id,omitempty"`
-	SprintIssueTypes   []string      `bson:"sprint_issue_types,omitempty"`
-	AssigneeFieldID    string        `bson:"assignee_field_id,omitempty"`
-	StoryPointsFieldID string        `bson:"story_points_field_id,omitempty"`
-	DailyDoneJQL       string        `bson:"daily_done_jql,omitempty"`
-	DailyDoingJQL      string        `bson:"daily_doing_jql,omitempty"`
-	DailyPlanJQL       string        `bson:"daily_plan_jql,omitempty"`
-	DoneStatuses       []string      `bson:"done_statuses,omitempty"`
-	HoldStatuses       []string      `bson:"hold_statuses,omitempty"`
-	CreatedTS          int64         `bson:"created_ts"`
-	ModifiedTS         int64         `bson:"modified_ts"`
+	ID                   bson.ObjectID `bson:"_id,omitempty"`
+	TelegramUserID       int64         `bson:"telegram_user_id"`
+	JiraCloudID          string        `bson:"jira_cloud_id,omitempty"`
+	JiraAccountID        string        `bson:"jira_account_id,omitempty"`
+	JiraDisplayName      string        `bson:"jira_display_name,omitempty"`
+	JiraSiteURL          string        `bson:"jira_site_url,omitempty"`
+	AccessToken          string        `bson:"access_token,omitempty"`
+	RefreshToken         string        `bson:"refresh_token,omitempty"`
+	TokenExpiresAt       time.Time     `bson:"token_expires_at,omitempty"`
+	Language             string        `bson:"language,omitempty"`
+	DefaultProject       string        `bson:"default_project,omitempty"`
+	DefaultBoardID       int           `bson:"default_board_id,omitempty"`
+	DefaultIssueTypeID   string        `bson:"default_issue_type_id,omitempty"`
+	DefaultIssueTypeName string        `bson:"default_issue_type_name,omitempty"`
+	SprintIssueTypes     []string      `bson:"sprint_issue_types,omitempty"`
+	AssigneeFieldID      string        `bson:"assignee_field_id,omitempty"`
+	StoryPointsFieldID   string        `bson:"story_points_field_id,omitempty"`
+	DailyDoneJQL         string        `bson:"daily_done_jql,omitempty"`
+	DailyDoingJQL        string        `bson:"daily_doing_jql,omitempty"`
+	DailyPlanJQL         string        `bson:"daily_plan_jql,omitempty"`
+	DoneStatuses         []string      `bson:"done_statuses,omitempty"`
+	HoldStatuses         []string      `bson:"hold_statuses,omitempty"`
+	CreatedTS            int64         `bson:"created_ts"`
+	ModifiedTS           int64         `bson:"modified_ts"`
 }
 
 type UserRepo struct {
@@ -191,6 +193,24 @@ func (r *UserRepo) SetDefaults(ctx context.Context, telegramUserID int64, projec
 	return nil
 }
 
+// SetDefaultIssueType stores the issue type used by /createfast when the
+// user doesn't spell one out. Empty typeID clears the preference.
+func (r *UserRepo) SetDefaultIssueType(ctx context.Context, telegramUserID int64, typeID, typeName string) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"default_issue_type_id":   typeID,
+			"default_issue_type_name": typeName,
+			"modified_ts":             time.Now().Unix(),
+		},
+	}
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return err
+	}
+	r.publishDefaultsChanged(ctx, telegramUserID)
+	return nil
+}
+
 func (r *UserRepo) SetSprintIssueTypes(ctx context.Context, telegramUserID int64, issueTypes []string) error {
 	filter := bson.M{"telegram_user_id": telegramUserID}
 	update := bson.M{
@@ -320,18 +340,20 @@ func (r *UserRepo) publishDefaultsChanged(ctx context.Context, telegramUserID in
 		return
 	}
 	_ = r.pub.Publish(ctx, &eventsv1.DefaultsChanged{
-		TelegramID:         telegramUserID,
-		DefaultProject:     u.DefaultProject,
-		DefaultBoardID:     u.DefaultBoardID,
-		SprintIssueTypes:   u.SprintIssueTypes,
-		AssigneeFieldID:    u.AssigneeFieldID,
-		StoryPointsFieldID: u.StoryPointsFieldID,
-		DoneStatuses:       u.DoneStatuses,
-		HoldStatuses:       u.HoldStatuses,
-		DailyDoneJQL:       u.DailyDoneJQL,
-		DailyDoingJQL:      u.DailyDoingJQL,
-		DailyPlanJQL:       u.DailyPlanJQL,
-		At:                 time.Now().Unix(),
+		TelegramID:           telegramUserID,
+		DefaultProject:       u.DefaultProject,
+		DefaultBoardID:       u.DefaultBoardID,
+		DefaultIssueTypeID:   u.DefaultIssueTypeID,
+		DefaultIssueTypeName: u.DefaultIssueTypeName,
+		SprintIssueTypes:     u.SprintIssueTypes,
+		AssigneeFieldID:      u.AssigneeFieldID,
+		StoryPointsFieldID:   u.StoryPointsFieldID,
+		DoneStatuses:         u.DoneStatuses,
+		HoldStatuses:         u.HoldStatuses,
+		DailyDoneJQL:         u.DailyDoneJQL,
+		DailyDoingJQL:        u.DailyDoingJQL,
+		DailyPlanJQL:         u.DailyPlanJQL,
+		At:                   time.Now().Unix(),
 	}, "")
 }
 

@@ -66,6 +66,9 @@ func (s *stubProvider) SetSprintIssueTypes(_ context.Context, id int64, types []
 	return s.err
 }
 
+func (s *stubProvider) SetDefaultIssueType(_ context.Context, _ int64, _, _ string) error {
+	return s.err
+}
 func (s *stubProvider) SetDoneStatuses(_ context.Context, _ int64, _ []string) error   { return s.err }
 func (s *stubProvider) SetHoldStatuses(_ context.Context, _ int64, _ []string) error   { return s.err }
 func (s *stubProvider) SetAssigneeField(_ context.Context, _ int64, _ string) error    { return s.err }

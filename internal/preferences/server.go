@@ -31,6 +31,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(preferencesv1.GetPath, s.serveGet)
 	mux.HandleFunc(preferencesv1.SetLanguagePath, s.serveSetLanguage)
 	mux.HandleFunc(preferencesv1.SetDefaultsPath, s.serveSetDefaults)
+	mux.HandleFunc(preferencesv1.SetDefaultIssueTypePath, s.serveSetDefaultIssueType)
 	mux.HandleFunc(preferencesv1.SetSprintIssueTypesPath, s.serveSetSprintIssueTypes)
 	mux.HandleFunc(preferencesv1.SetDoneStatusesPath, s.serveSetDoneStatuses)
 	mux.HandleFunc(preferencesv1.SetHoldStatusesPath, s.serveSetHoldStatuses)
@@ -86,6 +87,18 @@ func (s *Server) serveSetDefaults(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.provider.SetDefaults(r.Context(), req.TelegramID, req.DefaultProject, req.DefaultBoardID); err != nil {
 		s.writeProviderError(w, r, err, "set_defaults")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) serveSetDefaultIssueType(w http.ResponseWriter, r *http.Request) {
+	var req preferencesv1.SetDefaultIssueTypeRequest
+	if !s.decodePost(w, r, &req) {
+		return
+	}
+	if err := s.provider.SetDefaultIssueType(r.Context(), req.TelegramID, req.DefaultIssueTypeID, req.DefaultIssueTypeName); err != nil {
+		s.writeProviderError(w, r, err, "set_default_issue_type")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -24,6 +24,9 @@ const (
 	// SetDefaultsPath updates default_project + default_board_id.
 	SetDefaultsPath = "/internal/preferences/defaults"
 
+	// SetDefaultIssueTypePath updates default_issue_type_id + default_issue_type_name.
+	SetDefaultIssueTypePath = "/internal/preferences/default-issue-type"
+
 	// SetSprintIssueTypesPath updates sprint_issue_types.
 	SetSprintIssueTypesPath = "/internal/preferences/sprint-issue-types"
 
@@ -56,18 +59,20 @@ const (
 // Preferences is the GET response. Zero values indicate the user has not
 // configured that preference; consumers treat them as "default".
 type Preferences struct {
-	TelegramID         int64    `json:"telegram_id"`
-	Language           string   `json:"language,omitempty"`
-	DefaultProject     string   `json:"default_project,omitempty"`
-	DefaultBoardID     int      `json:"default_board_id,omitempty"`
-	SprintIssueTypes   []string `json:"sprint_issue_types,omitempty"`
-	AssigneeFieldID    string   `json:"assignee_field_id,omitempty"`
-	StoryPointsFieldID string   `json:"story_points_field_id,omitempty"`
-	DoneStatuses       []string `json:"done_statuses,omitempty"`
-	HoldStatuses       []string `json:"hold_statuses,omitempty"`
-	DailyDoneJQL       string   `json:"daily_done_jql,omitempty"`
-	DailyDoingJQL      string   `json:"daily_doing_jql,omitempty"`
-	DailyPlanJQL       string   `json:"daily_plan_jql,omitempty"`
+	TelegramID           int64    `json:"telegram_id"`
+	Language             string   `json:"language,omitempty"`
+	DefaultProject       string   `json:"default_project,omitempty"`
+	DefaultBoardID       int      `json:"default_board_id,omitempty"`
+	DefaultIssueTypeID   string   `json:"default_issue_type_id,omitempty"`
+	DefaultIssueTypeName string   `json:"default_issue_type_name,omitempty"`
+	SprintIssueTypes     []string `json:"sprint_issue_types,omitempty"`
+	AssigneeFieldID      string   `json:"assignee_field_id,omitempty"`
+	StoryPointsFieldID   string   `json:"story_points_field_id,omitempty"`
+	DoneStatuses         []string `json:"done_statuses,omitempty"`
+	HoldStatuses         []string `json:"hold_statuses,omitempty"`
+	DailyDoneJQL         string   `json:"daily_done_jql,omitempty"`
+	DailyDoingJQL        string   `json:"daily_doing_jql,omitempty"`
+	DailyPlanJQL         string   `json:"daily_plan_jql,omitempty"`
 }
 
 // SetLanguageRequest — body for SetLanguagePath.
@@ -81,6 +86,13 @@ type SetDefaultsRequest struct {
 	TelegramID     int64  `json:"telegram_id"`
 	DefaultProject string `json:"default_project"`
 	DefaultBoardID int    `json:"default_board_id"`
+}
+
+// SetDefaultIssueTypeRequest — body for SetDefaultIssueTypePath.
+type SetDefaultIssueTypeRequest struct {
+	TelegramID           int64  `json:"telegram_id"`
+	DefaultIssueTypeID   string `json:"default_issue_type_id"`
+	DefaultIssueTypeName string `json:"default_issue_type_name"`
 }
 
 // SetSprintIssueTypesRequest — body for SetSprintIssueTypesPath.

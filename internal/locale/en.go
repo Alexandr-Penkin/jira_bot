@@ -24,7 +24,8 @@ var en = map[string]string{
 		"/transition `PROJ-123` — Change issue status\n" +
 		"/assign `PROJ-123` — Assign issue to yourself\n" +
 		"/create — Create a new issue (interactive wizard)\n" +
-		"/create `PROJ Type | Summary | Description` — Quick create\n\n" +
+		"/create `PROJ Type | Summary | Description` — Quick create\n" +
+		"/createfast `Summary\\nDescription` — One-shot create with defaults (supports photo captions)\n\n" +
 		"*Notifications:*\n" +
 		"/watch `PROJ` — Subscribe to project notifications\n" +
 		"/unwatch — Remove all subscriptions in this chat\n" +
@@ -92,13 +93,15 @@ var en = map[string]string{
 	"me.failed": "Failed to fetch Jira profile. Try /connect again if the issue persists.",
 
 	// Defaults
-	"defaults.enter_project": "Enter project key (e.g. `PROJ`).\nSend `-` to clear defaults.",
-	"defaults.choose_board":  "Choose a default board or type its name:",
-	"defaults.saved":         "Default project set: *%s*, board: *%s*.",
-	"defaults.cleared":       "Default project and board cleared.",
-	"defaults.current":       "\n\nDefault project: *%s*, board: *%s*",
-	"defaults.boards_failed": "Failed to load boards. Default project saved without board.",
-	"defaults.project_saved": "Default project set: *%s* (no board selected).",
+	"defaults.enter_project":     "Enter project key (e.g. `PROJ`).\nSend `-` to clear defaults.",
+	"defaults.choose_board":      "Choose a default board or type its name:",
+	"defaults.saved":             "Default project set: *%s*, board: *%s*.",
+	"defaults.cleared":           "Default project and board cleared.",
+	"defaults.current":           "\n\nDefault project: *%s*, board: *%s*",
+	"defaults.boards_failed":     "Failed to load boards. Default project saved without board.",
+	"defaults.project_saved":     "Default project set: *%s* (no board selected).",
+	"defaults.choose_issue_type": "Choose default issue type for *%s* (used by /createfast):",
+	"defaults.issue_type_saved":  "Default issue type set to *%s*.",
 
 	// Issue
 	"issue.usage":             "Usage: /issue PROJ-123",
@@ -472,4 +475,11 @@ var en = map[string]string{
 	"btn.create_issue":            "Create Issue",
 	"btn.templates":               "Templates",
 	"btn.skip":                    "Skip",
+
+	// Createfast (quick issue creation)
+	"createfast.no_defaults":      "Set a default project and issue type via /defaults first.",
+	"createfast.summary_empty":    "Summary is required. Usage: `/createfast Summary line\nOptional description.`",
+	"createfast.attached":         "📎 Attached to %s.",
+	"createfast.attach_failed":    "Failed to attach file: %s",
+	"createfast.unsupported_file": "Only image attachments are supported.",
 }

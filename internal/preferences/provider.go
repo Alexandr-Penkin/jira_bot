@@ -31,6 +31,7 @@ type Provider interface {
 	Get(ctx context.Context, telegramID int64) (*preferencesv1.Preferences, error)
 	SetLanguage(ctx context.Context, telegramID int64, lang string) error
 	SetDefaults(ctx context.Context, telegramID int64, project string, boardID int) error
+	SetDefaultIssueType(ctx context.Context, telegramID int64, typeID, typeName string) error
 	SetSprintIssueTypes(ctx context.Context, telegramID int64, issueTypes []string) error
 	SetDoneStatuses(ctx context.Context, telegramID int64, statuses []string) error
 	SetHoldStatuses(ctx context.Context, telegramID int64, statuses []string) error
@@ -47,6 +48,7 @@ type UserStore interface {
 	GetByTelegramID(ctx context.Context, telegramUserID int64) (*storage.User, error)
 	SetLanguage(ctx context.Context, telegramUserID int64, lang string) error
 	SetDefaults(ctx context.Context, telegramUserID int64, project string, boardID int) error
+	SetDefaultIssueType(ctx context.Context, telegramUserID int64, typeID, typeName string) error
 	SetSprintIssueTypes(ctx context.Context, telegramUserID int64, issueTypes []string) error
 	SetDoneStatuses(ctx context.Context, telegramUserID int64, statuses []string) error
 	SetHoldStatuses(ctx context.Context, telegramUserID int64, statuses []string) error
@@ -97,6 +99,16 @@ func (p *LocalProvider) SetDefaults(ctx context.Context, telegramID int64, proje
 	}
 	if err := p.userRepo.SetDefaults(ctx, telegramID, project, boardID); err != nil {
 		return fmt.Errorf("set defaults: %w", err)
+	}
+	return nil
+}
+
+func (p *LocalProvider) SetDefaultIssueType(ctx context.Context, telegramID int64, typeID, typeName string) error {
+	if telegramID == 0 {
+		return &ProviderError{Code: preferencesv1.ErrCodeInvalidRequest, Message: "telegram_id is required"}
+	}
+	if err := p.userRepo.SetDefaultIssueType(ctx, telegramID, typeID, typeName); err != nil {
+		return fmt.Errorf("set default issue type: %w", err)
 	}
 	return nil
 }
@@ -163,18 +175,20 @@ func (p *LocalProvider) SetDailyJQL(ctx context.Context, telegramID int64, doneJ
 
 func userToPreferences(user *storage.User) *preferencesv1.Preferences {
 	return &preferencesv1.Preferences{
-		TelegramID:         user.TelegramUserID,
-		Language:           user.Language,
-		DefaultProject:     user.DefaultProject,
-		DefaultBoardID:     user.DefaultBoardID,
-		SprintIssueTypes:   user.SprintIssueTypes,
-		AssigneeFieldID:    user.AssigneeFieldID,
-		StoryPointsFieldID: user.StoryPointsFieldID,
-		DoneStatuses:       user.DoneStatuses,
-		HoldStatuses:       user.HoldStatuses,
-		DailyDoneJQL:       user.DailyDoneJQL,
-		DailyDoingJQL:      user.DailyDoingJQL,
-		DailyPlanJQL:       user.DailyPlanJQL,
+		TelegramID:           user.TelegramUserID,
+		Language:             user.Language,
+		DefaultProject:       user.DefaultProject,
+		DefaultBoardID:       user.DefaultBoardID,
+		DefaultIssueTypeID:   user.DefaultIssueTypeID,
+		DefaultIssueTypeName: user.DefaultIssueTypeName,
+		SprintIssueTypes:     user.SprintIssueTypes,
+		AssigneeFieldID:      user.AssigneeFieldID,
+		StoryPointsFieldID:   user.StoryPointsFieldID,
+		DoneStatuses:         user.DoneStatuses,
+		HoldStatuses:         user.HoldStatuses,
+		DailyDoneJQL:         user.DailyDoneJQL,
+		DailyDoingJQL:        user.DailyDoingJQL,
+		DailyPlanJQL:         user.DailyPlanJQL,
 	}
 }
 

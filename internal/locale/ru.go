@@ -24,7 +24,8 @@ var ru = map[string]string{
 		"/transition `PROJ-123` — Сменить статус\n" +
 		"/assign `PROJ-123` — Назначить на себя\n" +
 		"/create — Создать задачу (пошаговый мастер)\n" +
-		"/create `PROJ Тип | Заголовок | Описание` — Быстрое создание\n\n" +
+		"/create `PROJ Тип | Заголовок | Описание` — Быстрое создание\n" +
+		"/createfast `Заголовок\\nОписание` — Мгновенное создание с дефолтами (можно с фото)\n\n" +
 		"*Уведомления:*\n" +
 		"/watch `PROJ` — Подписаться на проект\n" +
 		"/unwatch — Удалить все подписки\n" +
@@ -92,13 +93,15 @@ var ru = map[string]string{
 	"me.failed": "Не удалось получить профиль Jira. Попробуйте /connect снова.",
 
 	// Defaults
-	"defaults.enter_project": "Введите ключ проекта (напр. `PROJ`).\nОтправьте `-` для сброса.",
-	"defaults.choose_board":  "Выберите доску по умолчанию или введите её название:",
-	"defaults.saved":         "Проект по умолчанию: *%s*, доска: *%s*.",
-	"defaults.cleared":       "Проект и доска по умолчанию сброшены.",
-	"defaults.current":       "\n\nПроект по умолчанию: *%s*, доска: *%s*",
-	"defaults.boards_failed": "Не удалось загрузить доски. Проект сохранён без доски.",
-	"defaults.project_saved": "Проект по умолчанию: *%s* (доска не выбрана).",
+	"defaults.enter_project":     "Введите ключ проекта (напр. `PROJ`).\nОтправьте `-` для сброса.",
+	"defaults.choose_board":      "Выберите доску по умолчанию или введите её название:",
+	"defaults.saved":             "Проект по умолчанию: *%s*, доска: *%s*.",
+	"defaults.cleared":           "Проект и доска по умолчанию сброшены.",
+	"defaults.current":           "\n\nПроект по умолчанию: *%s*, доска: *%s*",
+	"defaults.boards_failed":     "Не удалось загрузить доски. Проект сохранён без доски.",
+	"defaults.project_saved":     "Проект по умолчанию: *%s* (доска не выбрана).",
+	"defaults.choose_issue_type": "Выберите тип задачи по умолчанию для *%s* (используется в /createfast):",
+	"defaults.issue_type_saved":  "Тип задачи по умолчанию: *%s*.",
 
 	// Issue
 	"issue.usage":             "Использование: /issue PROJ-123",
@@ -472,4 +475,11 @@ var ru = map[string]string{
 	"btn.create_issue":            "Создать задачу",
 	"btn.templates":               "Шаблоны",
 	"btn.skip":                    "Пропустить",
+
+	// Createfast (быстрое создание задач)
+	"createfast.no_defaults":      "Сначала задайте проект и тип задачи по умолчанию через /defaults.",
+	"createfast.summary_empty":    "Нужен заголовок. Используйте: `/createfast Заголовок\nОписание (необязательно).`",
+	"createfast.attached":         "📎 Прикреплено к %s.",
+	"createfast.attach_failed":    "Не удалось прикрепить файл: %s",
+	"createfast.unsupported_file": "Поддерживаются только картинки в виде вложения.",
 }

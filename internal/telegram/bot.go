@@ -37,7 +37,7 @@ func NewBot(token string, oauth *jira.OAuthClient, jiraClient *jira.Client, user
 
 	return &Bot{
 		api:     api,
-		handler: NewHandler(api, oauth, jiraClient, userRepo, prefs, subRepo, scheduleRepo, webhookMgr, templateRepo, log, adminID),
+		handler: NewHandler(api, oauth, jiraClient, userRepo, prefs, subRepo, scheduleRepo, webhookMgr, templateRepo, log, adminID, httpClient),
 		log:     log,
 	}, nil
 }

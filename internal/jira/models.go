@@ -5,8 +5,19 @@ import "encoding/json"
 // CreateMeta types for issue creation wizard.
 
 type CreateMetaIssueType struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Subtask bool   `json:"subtask"`
+}
+
+// AttachmentResponse mirrors one entry of the JSON array returned by
+// POST /issue/{key}/attachments.
+type AttachmentResponse struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mimeType"`
+	Content  string `json:"content"`
 }
 
 type CreateMetaField struct {

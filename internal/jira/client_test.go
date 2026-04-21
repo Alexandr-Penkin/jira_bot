@@ -274,6 +274,60 @@ func TestExtractUserField(t *testing.T) {
 	}
 }
 
+func TestClient_UploadAttachment(t *testing.T) {
+	// Canned response mirroring a real Jira POST /issue/ABC-1/attachments reply.
+	rt := newCapturingClient(200, `[{"id":"10000","filename":"pic.jpg","size":1234,"mimeType":"image/jpeg","content":"https://example/content"}]`)
+	withHTTPClient(t, rt)
+
+	stub := &stubTokenProvider{
+		resp: &identityv1.TokenLeaseResponse{AccessToken: "leased", CloudID: "cloud-abc"},
+	}
+	c := NewClient(nil, nil, zerolog.Nop())
+	c.SetTokenProvider(stub)
+
+	user := &storage.User{TelegramUserID: 9, JiraCloudID: "stored"}
+	body := strings.NewReader("fake-bytes")
+	attachments, err := c.UploadAttachment(context.Background(), user, "ABC-1", "pic.jpg", "image/jpeg", body)
+	require.NoError(t, err)
+	require.Len(t, attachments, 1)
+	assert.Equal(t, "10000", attachments[0].ID)
+	assert.Equal(t, "pic.jpg", attachments[0].Filename)
+	assert.Equal(t, int64(1234), attachments[0].Size)
+
+	require.NotNil(t, rt.lastReq)
+	assert.Equal(t, http.MethodPost, rt.lastReq.Method)
+	assert.Equal(t, "Bearer leased", rt.lastReq.Header.Get("Authorization"))
+	assert.Equal(t, "no-check", rt.lastReq.Header.Get("X-Atlassian-Token"))
+	ct := rt.lastReq.Header.Get("Content-Type")
+	assert.True(t, strings.HasPrefix(ct, "multipart/form-data"), "Content-Type must be multipart, got %q", ct)
+	assert.Contains(t, rt.lastReq.URL.Path, "/ex/jira/cloud-abc/")
+	assert.Contains(t, rt.lastReq.URL.Path, "/issue/ABC-1/attachments")
+}
+
+func TestClient_UploadAttachment_HTTPError(t *testing.T) {
+	rt := newCapturingClient(413, `{"errorMessages":["too large"]}`)
+	withHTTPClient(t, rt)
+
+	stub := &stubTokenProvider{
+		resp: &identityv1.TokenLeaseResponse{AccessToken: "t", CloudID: "c"},
+	}
+	c := NewClient(nil, nil, zerolog.Nop())
+	c.SetTokenProvider(stub)
+
+	_, err := c.UploadAttachment(context.Background(), &storage.User{TelegramUserID: 1}, "ABC-1", "pic.jpg", "image/jpeg", strings.NewReader("x"))
+	require.Error(t, err)
+	var httpErr *HTTPError
+	require.True(t, errors.As(err, &httpErr))
+	assert.Equal(t, 413, httpErr.Status)
+}
+
+func TestClient_UploadAttachment_MissingIssueKey(t *testing.T) {
+	c := NewClient(nil, nil, zerolog.Nop())
+	_, err := c.UploadAttachment(context.Background(), &storage.User{}, "", "pic.jpg", "image/jpeg", strings.NewReader("x"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "issue key")
+}
+
 func TestExtractUserField_MissingOrNull(t *testing.T) {
 	assert.Nil(t, extractUserField(mustFields(t, `{}`), "customfield_42"))
 	assert.Nil(t, extractUserField(mustFields(t, `{"customfield_42":null}`), "customfield_42"))

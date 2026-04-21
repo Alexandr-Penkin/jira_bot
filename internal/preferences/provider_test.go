@@ -58,6 +58,16 @@ func (f *fakeUserStore) SetDefaults(_ context.Context, id int64, project string,
 	return nil
 }
 
+func (f *fakeUserStore) SetDefaultIssueType(_ context.Context, id int64, typeID, typeName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensureUser(id)
+	f.user.DefaultIssueTypeID = typeID
+	f.user.DefaultIssueTypeName = typeName
+	f.record("default_issue_type")
+	return nil
+}
+
 func (f *fakeUserStore) SetSprintIssueTypes(_ context.Context, id int64, types []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

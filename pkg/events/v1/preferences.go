@@ -23,18 +23,20 @@ func (e LanguageChanged) IdempotencyKey() string {
 // simple (replace, don't merge) and don't need to know which setter was
 // invoked.
 type DefaultsChanged struct {
-	TelegramID         int64    `json:"telegram_id"`
-	DefaultProject     string   `json:"default_project,omitempty"`
-	DefaultBoardID     int      `json:"default_board_id,omitempty"`
-	SprintIssueTypes   []string `json:"sprint_issue_types,omitempty"`
-	AssigneeFieldID    string   `json:"assignee_field_id,omitempty"`
-	StoryPointsFieldID string   `json:"story_points_field_id,omitempty"`
-	DoneStatuses       []string `json:"done_statuses,omitempty"`
-	HoldStatuses       []string `json:"hold_statuses,omitempty"`
-	DailyDoneJQL       string   `json:"daily_done_jql,omitempty"`
-	DailyDoingJQL      string   `json:"daily_doing_jql,omitempty"`
-	DailyPlanJQL       string   `json:"daily_plan_jql,omitempty"`
-	At                 int64    `json:"at"`
+	TelegramID           int64    `json:"telegram_id"`
+	DefaultProject       string   `json:"default_project,omitempty"`
+	DefaultBoardID       int      `json:"default_board_id,omitempty"`
+	DefaultIssueTypeID   string   `json:"default_issue_type_id,omitempty"`
+	DefaultIssueTypeName string   `json:"default_issue_type_name,omitempty"`
+	SprintIssueTypes     []string `json:"sprint_issue_types,omitempty"`
+	AssigneeFieldID      string   `json:"assignee_field_id,omitempty"`
+	StoryPointsFieldID   string   `json:"story_points_field_id,omitempty"`
+	DoneStatuses         []string `json:"done_statuses,omitempty"`
+	HoldStatuses         []string `json:"hold_statuses,omitempty"`
+	DailyDoneJQL         string   `json:"daily_done_jql,omitempty"`
+	DailyDoingJQL        string   `json:"daily_doing_jql,omitempty"`
+	DailyPlanJQL         string   `json:"daily_plan_jql,omitempty"`
+	At                   int64    `json:"at"`
 }
 
 func (*DefaultsChanged) Subject() string { return SubjectDefaultsChanged }

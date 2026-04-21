@@ -103,6 +103,14 @@ func (c *Client) SetDefaults(ctx context.Context, telegramID int64, project stri
 	})
 }
 
+func (c *Client) SetDefaultIssueType(ctx context.Context, telegramID int64, typeID, typeName string) error {
+	return c.post(ctx, preferencesv1.SetDefaultIssueTypePath, preferencesv1.SetDefaultIssueTypeRequest{
+		TelegramID:           telegramID,
+		DefaultIssueTypeID:   typeID,
+		DefaultIssueTypeName: typeName,
+	})
+}
+
 func (c *Client) SetSprintIssueTypes(ctx context.Context, telegramID int64, issueTypes []string) error {
 	return c.post(ctx, preferencesv1.SetSprintIssueTypesPath, preferencesv1.SetSprintIssueTypesRequest{
 		TelegramID: telegramID,

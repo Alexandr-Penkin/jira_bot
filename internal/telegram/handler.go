@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,6 +55,7 @@ type Handler struct {
 	pollerRef        *poller.Poller
 	webhookRepo      *storage.WebhookRepo
 	webhookEvents    func() int64
+	httpClient       *http.Client
 }
 
 // SetWebhookStats wires the webhook registration repo and an accessor for
@@ -64,7 +66,10 @@ func (h *Handler) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int
 	h.webhookEvents = eventsFn
 }
 
-func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, prefs preferences.Provider, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Client, userRepo *storage.UserRepo, prefs preferences.Provider, subRepo *storage.SubscriptionRepo, scheduleRepo *storage.ScheduleRepo, webhookMgr *jira.WebhookManager, templateRepo *storage.TemplateRepo, log zerolog.Logger, adminID int64, httpClient *http.Client) *Handler {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
 	return &Handler{
 		api:          api,
 		oauth:        oauth,
@@ -78,6 +83,7 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 		log:          log,
 		states:       newStateManager(),
 		adminID:      adminID,
+		httpClient:   httpClient,
 	}
 }
 
@@ -116,6 +122,13 @@ func (h *Handler) HandleUpdate(ctx context.Context, update tgbotapi.Update) {
 		msg := h.routeCommand(ctx, update.Message)
 		h.sendMessage(msg)
 		return
+	}
+
+	if update.Message.Photo != nil || update.Message.Document != nil {
+		if cmd, args := captionCommand(update.Message); cmd == createFastCommand {
+			h.handleCreateFastMedia(ctx, update.Message, args)
+			return
+		}
 	}
 
 	h.handleTextInput(ctx, update.Message)
@@ -239,6 +252,9 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 		return h.handleSchedules(ctx, chatID, userID)
 	case "create":
 		return h.handleCreate(ctx, chatID, userID, args)
+	case createFastCommand:
+		h.handleCreateFastText(ctx, message)
+		return tgbotapi.MessageConfig{}
 	case "admin":
 		lang := h.getLang(ctx, userID)
 		if !h.isAdmin(userID) {
@@ -337,6 +353,8 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleFiltersCallback(ctx, cq, parts)
 	case "defaults_board":
 		h.handleDefaultsBoardCallback(ctx, cq, parts)
+	case "def_it":
+		h.handleDefaultsIssueTypeCallback(ctx, cq, parts)
 	case "sprint_board", "sprint_report":
 		h.handleSprintCallback(ctx, cq, parts)
 	case "it_toggle":

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"sort"
 	"strings"
@@ -737,6 +739,17 @@ func (c *Client) SearchUsers(ctx context.Context, user *storage.User, query stri
 }
 
 func (c *Client) doRequest(ctx context.Context, user *storage.User, method, path string, reqBody io.Reader) ([]byte, error) {
+	headers := map[string]string{"Accept": "application/json"}
+	if reqBody != nil {
+		headers["Content-Type"] = "application/json"
+	}
+	return c.doRequestWithHeaders(ctx, user, method, path, reqBody, headers)
+}
+
+// doRequestWithHeaders is the shared path for JSON and multipart requests.
+// ensureValidToken + HTTPError handling stay in one place so the caller
+// only controls Content-Type / extra headers.
+func (c *Client) doRequestWithHeaders(ctx context.Context, user *storage.User, method, path string, reqBody io.Reader, headers map[string]string) ([]byte, error) {
 	accessToken, cloudID, err := c.ensureValidToken(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("ensure valid token: %w", err)
@@ -749,9 +762,8 @@ func (c *Client) doRequest(ctx context.Context, user *storage.User, method, path
 	}
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := httpClient.Do(req)
@@ -924,6 +936,55 @@ func (c *Client) CreateIssue(ctx context.Context, user *storage.User, fields map
 	}
 
 	return &resp, nil
+}
+
+// UploadAttachment posts a single file to /issue/{issueKey}/attachments.
+// Jira requires the form field name to be "file" and the
+// X-Atlassian-Token: no-check header to bypass XSRF.
+func (c *Client) UploadAttachment(ctx context.Context, user *storage.User, issueKey, filename, contentType string, reader io.Reader) ([]AttachmentResponse, error) {
+	if issueKey == "" {
+		return nil, fmt.Errorf("issue key is required")
+	}
+	if filename == "" {
+		return nil, fmt.Errorf("filename is required")
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+	if contentType != "" {
+		partHeader.Set("Content-Type", contentType)
+	}
+	part, err := mw.CreatePart(partHeader)
+	if err != nil {
+		return nil, fmt.Errorf("create multipart part: %w", err)
+	}
+	if _, err = io.Copy(part, reader); err != nil {
+		return nil, fmt.Errorf("copy attachment body: %w", err)
+	}
+	if err = mw.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	path := fmt.Sprintf("/issue/%s/attachments", url.PathEscape(issueKey))
+	headers := map[string]string{
+		"Accept":            "application/json",
+		"Content-Type":      mw.FormDataContentType(),
+		"X-Atlassian-Token": "no-check",
+	}
+
+	body, err := c.doRequestWithHeaders(ctx, user, http.MethodPost, path, &buf, headers)
+	if err != nil {
+		return nil, err
+	}
+
+	var attachments []AttachmentResponse
+	if err = json.Unmarshal(body, &attachments); err != nil {
+		return nil, fmt.Errorf("decode attachment response: %w", err)
+	}
+	return attachments, nil
 }
 
 // GetPriorities returns all available priorities for the Jira instance.
