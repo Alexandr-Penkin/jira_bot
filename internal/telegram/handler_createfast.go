@@ -11,6 +11,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"SleepJiraBot/internal/format"
+	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/storage"
 )
@@ -76,9 +77,26 @@ func (h *Handler) createFast(ctx context.Context, chatID, userID int64, args str
 		return
 	}
 
-	if user.DefaultProject == "" || user.DefaultIssueTypeID == "" {
+	if user.DefaultProject == "" {
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "createfast.no_defaults")))
 		return
+	}
+
+	if user.DefaultIssueTypeID == "" {
+		typeID, typeName, resolveErr := h.resolveDefaultIssueType(ctx, user)
+		if resolveErr != nil || typeID == "" {
+			if resolveErr != nil {
+				h.log.Warn().Err(resolveErr).Str("project", user.DefaultProject).Msg("createfast: could not auto-resolve issue type")
+			}
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "createfast.no_defaults")))
+			return
+		}
+		if saveErr := h.prefs.SetDefaultIssueType(ctx, userID, typeID, typeName); saveErr != nil {
+			h.log.Error().Err(saveErr).Msg("createfast: failed to persist auto-resolved issue type")
+		}
+		user.DefaultIssueTypeID = typeID
+		user.DefaultIssueTypeName = typeName
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "createfast.auto_issue_type", typeName)))
 	}
 
 	summary, description := splitCreateFastArgs(args)
@@ -220,4 +238,44 @@ func (h *Handler) uploadCreateFastFile(ctx context.Context, chatID int64, user *
 		format.EscapeMarkdownV2(issueKey)))
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	h.sendMessage(msg)
+}
+
+// preferredDefaultIssueTypes lists the issue-type names we try to pick, in
+// order, when the user has a default project but no explicit default issue
+// type yet. "Dev task" matches the convention in this workspace; "Task" is
+// kept as a safety fallback for other Jira instances.
+var preferredDefaultIssueTypes = []string{"Dev task", "Task"}
+
+// resolveDefaultIssueType picks a sensible issue type for the user's default
+// project when they haven't explicitly chosen one yet. Walks
+// preferredDefaultIssueTypes in order, then falls back to the first
+// non-subtask entry.
+func (h *Handler) resolveDefaultIssueType(ctx context.Context, user *storage.User) (id, name string, err error) {
+	types, err := h.jiraAPI.GetCreateMetaIssueTypes(ctx, user, user.DefaultProject)
+	if err != nil {
+		return "", "", err
+	}
+
+	byName := make(map[string]*jira.CreateMetaIssueType, len(types))
+	var fallback *jira.CreateMetaIssueType
+	for i := range types {
+		t := &types[i]
+		if t.Subtask {
+			continue
+		}
+		byName[strings.ToLower(t.Name)] = t
+		if fallback == nil {
+			fallback = t
+		}
+	}
+
+	for _, pref := range preferredDefaultIssueTypes {
+		if t, ok := byName[strings.ToLower(pref)]; ok {
+			return t.ID, t.Name, nil
+		}
+	}
+	if fallback != nil {
+		return fallback.ID, fallback.Name, nil
+	}
+	return "", "", nil
 }

@@ -25,7 +25,8 @@ var en = map[string]string{
 		"/assign `PROJ-123` — Assign issue to yourself\n" +
 		"/create — Create a new issue (interactive wizard)\n" +
 		"/create `PROJ Type | Summary | Description` — Quick create\n" +
-		"/createfast `Summary\\nDescription` — One-shot create with defaults (supports photo captions)\n\n" +
+		"/createfast `Summary\\nDescription` — One-shot create with defaults (supports photo captions)\n" +
+		"/defaults — Set default project + issue type (used by /createfast)\n\n" +
 		"*Notifications:*\n" +
 		"/watch `PROJ` — Subscribe to project notifications\n" +
 		"/unwatch — Remove all subscriptions in this chat\n" +
@@ -478,6 +479,7 @@ var en = map[string]string{
 
 	// Createfast (quick issue creation)
 	"createfast.no_defaults":      "Set a default project and issue type via /defaults first.",
+	"createfast.auto_issue_type":  "ℹ️ No default issue type set. Using *%s* — change via /defaults.",
 	"createfast.summary_empty":    "Summary is required. Usage: `/createfast Summary line\nOptional description.`",
 	"createfast.attached":         "📎 Attached to %s.",
 	"createfast.attach_failed":    "Failed to attach file: %s",

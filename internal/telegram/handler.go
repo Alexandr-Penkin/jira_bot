@@ -255,6 +255,11 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 	case createFastCommand:
 		h.handleCreateFastText(ctx, message)
 		return tgbotapi.MessageConfig{}
+	case "defaults":
+		lang := h.getLang(ctx, userID)
+		h.states.Set(userID, "defaults_project", nil)
+		h.sendPrompt(chatID, locale.T(lang, "defaults.enter_project"), lang)
+		return tgbotapi.MessageConfig{}
 	case "admin":
 		lang := h.getLang(ctx, userID)
 		if !h.isAdmin(userID) {
