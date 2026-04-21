@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -29,6 +30,12 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 	"google.golang.org/grpc/credentials"
 )
+
+// metricsExporterEnv is the standard OTel env var operators use to
+// disable metrics export without touching the endpoint. Setting it to
+// "none" keeps traces flowing (useful for debugging-only stacks)
+// while skipping the metric OTLP exporter entirely.
+const metricsExporterEnv = "OTEL_METRICS_EXPORTER"
 
 // ShutdownFunc flushes and closes the active tracer provider. Always
 // safe to call, even when telemetry is disabled.
@@ -102,6 +109,20 @@ func Init(ctx context.Context, cfg Config, log zerolog.Logger) (ShutdownFunc, er
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tracerProvider)
+
+	// Operators can opt out of metrics export (keeping traces) by
+	// setting the standard OTel env var OTEL_METRICS_EXPORTER=none.
+	// Useful for debug-only stacks (Jaeger/Tempo without Prometheus)
+	// or cost-controlled rollouts where metric volume is a concern.
+	if os.Getenv(metricsExporterEnv) == "none" {
+		log.Info().
+			Str("endpoint", cfg.Endpoint).
+			Str("service", serviceName).
+			Msg("telemetry: OTLP tracer installed; metrics disabled via OTEL_METRICS_EXPORTER=none")
+		return func(shutdownCtx context.Context) error {
+			return tracerProvider.Shutdown(shutdownCtx)
+		}, nil
+	}
 
 	metricOpts := []otlpmetricgrpc.Option{
 		otlpmetricgrpc.WithEndpoint(cfg.Endpoint),

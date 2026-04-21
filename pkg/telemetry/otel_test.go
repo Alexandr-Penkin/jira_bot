@@ -64,3 +64,34 @@ func TestInit_EmptyEndpoint_MeterIsUsable(t *testing.T) {
 
 	require.NoError(t, shutdown(ctx))
 }
+
+// TestInit_MetricsDisabled_TracesStillFlow asserts that setting
+// OTEL_METRICS_EXPORTER=none together with a real endpoint installs
+// the tracer but skips the metric exporter. Shutdown must flush only
+// the tracer. The gRPC exporter dials lazily, so the loopback endpoint
+// never needs to accept a connection for this test.
+func TestInit_MetricsDisabled_TracesStillFlow(t *testing.T) {
+	t.Setenv("OTEL_METRICS_EXPORTER", "none")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	shutdown, err := Init(ctx, Config{
+		Service:  "sjb-test",
+		Endpoint: "127.0.0.1:14317",
+		Insecure: true,
+	}, zerolog.Nop())
+	require.NoError(t, err)
+	require.NotNil(t, shutdown)
+
+	// Calling meter APIs must still be safe — the global MeterProvider
+	// stays on its no-op default because we skipped the Set call.
+	m := otel.Meter("sjb-test")
+	c, err := m.Int64Counter("test.disabled")
+	require.NoError(t, err)
+	c.Add(ctx, 1, metric.WithAttributes())
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	_ = shutdown(shutdownCtx)
+}

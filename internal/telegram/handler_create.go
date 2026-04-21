@@ -22,13 +22,6 @@ func htmlEscape(s string) string {
 	return html.EscapeString(s)
 }
 
-func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
 const (
 	maxSummaryLen      = 255
 	maxDescriptionLen  = 10000
@@ -74,10 +67,7 @@ func (h *Handler) handleCreateStart(ctx context.Context, chatID, userID int64) {
 			),
 		}
 		for _, tmpl := range templates {
-			label := fmt.Sprintf("%s (%s %s)", tmpl.Name, tmpl.ProjectKey, tmpl.IssueTypeName)
-			if len(label) > 40 {
-				label = label[:37] + "..."
-			}
+			label := format.TruncateRunes(fmt.Sprintf("%s (%s %s)", tmpl.Name, tmpl.ProjectKey, tmpl.IssueTypeName), 37)
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(label, "cr:tmpl:"+tmpl.ID.Hex()),
 			))
@@ -132,11 +122,8 @@ func (h *Handler) handleCreateSummaryInput(ctx context.Context, chatID, userID i
 	h.states.Set(userID, "create_desc_pending", data)
 
 	if defaultDesc, ok := data["desc_template"]; ok && defaultDesc != "" {
-		preview := defaultDesc
-		if len(preview) > descMaxLen {
-			preview = preview[:descMaxLen] + "..."
-		}
-		msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.template_prefill", format.EscapeMarkdown(preview)))
+		preview := format.TruncateRunes(defaultDesc, descMaxLen)
+		msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.template_prefill", format.EscapeMarkdownV2(preview)))
 		msg.ParseMode = tgbotapi.ModeMarkdownV2
 		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -449,10 +436,7 @@ func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int6
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(result.Issues)+2)
 	for i := range result.Issues {
 		issue := &result.Issues[i]
-		label := fmt.Sprintf("%s — %s", issue.Key, issue.Fields.Summary)
-		if len(label) > 50 {
-			label = label[:47] + "..."
-		}
+		label := format.TruncateRunes(fmt.Sprintf("%s — %s", issue.Key, issue.Fields.Summary), 47)
 		data["epic_sum:"+issue.Key] = issue.Fields.Summary
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, "cr:epic:"+issue.Key),
@@ -759,7 +743,7 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 				extracted := adfDoc.ExtractText()
 				h.log.Debug().
 					Int("extracted_len", len(extracted)).
-					Str("raw_preview", truncateStr(string(f.DefaultValue), 200)).
+					Str("raw_preview", format.TruncateRunes(string(f.DefaultValue), 200)).
 					Msg("description default extracted")
 				if strings.TrimSpace(extracted) != "" {
 					data["desc_template"] = extracted
@@ -931,7 +915,7 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 	h.states.Clear(userID)
 
 	issueURL := fmt.Sprintf("%s/browse/%s", user.JiraSiteURL, resp.Key)
-	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.success", resp.Key, issueURL))
+	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.success", format.EscapeMarkdownV2(resp.Key), format.EscapeMarkdownV2URL(issueURL)))
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	msg.DisableWebPagePreview = true
 	h.sendMessage(msg)
@@ -1201,7 +1185,7 @@ func (h *Handler) handleCreateQuick(ctx context.Context, chatID, _ int64, user *
 	}
 
 	issueURL := fmt.Sprintf("%s/browse/%s", user.JiraSiteURL, resp.Key)
-	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.success", format.EscapeMarkdown(resp.Key), format.EscapeMarkdown(issueURL)))
+	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.success", format.EscapeMarkdownV2(resp.Key), format.EscapeMarkdownV2URL(issueURL)))
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	msg.DisableWebPagePreview = true
 	return msg
@@ -1291,49 +1275,46 @@ func buildADFFromText(text string) map[string]interface{} {
 
 func (h *Handler) buildCreateConfirmation(data map[string]string, lang locale.Lang) string {
 	var sb strings.Builder
-	sb.WriteString(format.EscapeMarkdown(locale.T(lang, "create.confirm_title")))
+	sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "create.confirm_title")))
 	sb.WriteString("\n\n")
 
-	sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_project")) + ":* ")
-	sb.WriteString(format.EscapeMarkdown(data["project"]))
+	sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_project")) + ":* ")
+	sb.WriteString(format.EscapeMarkdownV2(data["project"]))
 	sb.WriteString("\n")
 
-	sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_type")) + ":* ")
-	sb.WriteString(format.EscapeMarkdown(data["issue_type_name"]))
+	sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_type")) + ":* ")
+	sb.WriteString(format.EscapeMarkdownV2(data["issue_type_name"]))
 	sb.WriteString("\n")
 
-	sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_summary")) + ":* ")
-	sb.WriteString(format.EscapeMarkdown(data["summary"]))
+	sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_summary")) + ":* ")
+	sb.WriteString(format.EscapeMarkdownV2(data["summary"]))
 	sb.WriteString("\n")
 
 	if desc := data["description"]; desc != "" {
-		preview := desc
-		if len(preview) > 100 {
-			preview = preview[:97] + "..."
-		}
-		sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_description")) + ":* ")
-		sb.WriteString(format.EscapeMarkdown(preview))
+		preview := format.TruncateRunes(desc, 97)
+		sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_description")) + ":* ")
+		sb.WriteString(format.EscapeMarkdownV2(preview))
 		sb.WriteString("\n")
 	}
 
 	if name := data["priority_name"]; name != "" {
-		sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_priority")) + ":* ")
-		sb.WriteString(format.EscapeMarkdown(name))
+		sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_priority")) + ":* ")
+		sb.WriteString(format.EscapeMarkdownV2(name))
 		sb.WriteString("\n")
 	}
 
 	if name := data["assignee_name"]; name != "" {
-		sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_assignee")) + ":* ")
-		sb.WriteString(format.EscapeMarkdown(name))
+		sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_assignee")) + ":* ")
+		sb.WriteString(format.EscapeMarkdownV2(name))
 		sb.WriteString("\n")
 	}
 
 	if epicKey := data["epic_key"]; epicKey != "" {
-		sb.WriteString("*" + format.EscapeMarkdown(locale.T(lang, "create.field_epic")) + ":* ")
-		sb.WriteString(format.EscapeMarkdown(epicKey))
+		sb.WriteString("*" + format.EscapeMarkdownV2(locale.T(lang, "create.field_epic")) + ":* ")
+		sb.WriteString(format.EscapeMarkdownV2(epicKey))
 		if summary := data["epic_summary"]; summary != "" {
 			sb.WriteString(" — ")
-			sb.WriteString(format.EscapeMarkdown(summary))
+			sb.WriteString(format.EscapeMarkdownV2(summary))
 		}
 		sb.WriteString("\n")
 	}
@@ -1352,8 +1333,8 @@ func (h *Handler) buildCreateConfirmation(data map[string]string, lang locale.La
 		if valName, ok := data["cfval:"+fieldID]; ok && valName != "" {
 			displayVal = valName
 		}
-		sb.WriteString("*" + format.EscapeMarkdown(fieldName) + ":* ")
-		sb.WriteString(format.EscapeMarkdown(displayVal))
+		sb.WriteString("*" + format.EscapeMarkdownV2(fieldName) + ":* ")
+		sb.WriteString(format.EscapeMarkdownV2(displayVal))
 		sb.WriteString("\n")
 	}
 

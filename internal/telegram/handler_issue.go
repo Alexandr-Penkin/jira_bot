@@ -250,9 +250,7 @@ func formatIssue(lang locale.Lang, issue *jira.Issue, siteURL string) string {
 
 	desc := f.Description.ExtractText()
 	if desc != "" {
-		if len(desc) > descMaxLen {
-			desc = desc[:descMaxLen] + "..."
-		}
+		desc = format.TruncateRunes(desc, descMaxLen)
 		text += fmt.Sprintf("\n\n_%s_", format.EscapeMarkdown(desc))
 	}
 
