@@ -103,6 +103,9 @@ func reportsMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.sprint"), "a:sprint"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.daily_sub"), "a:dailysub"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.new_schedule"), "a:sched"),
 		),
 		tgbotapi.NewInlineKeyboardRow(

@@ -266,6 +266,26 @@ var ru = map[string]string{
 	"daily_jql.reset":       "JQL для daily сброшен к значениям по умолчанию.",
 	"daily.no_plan":         "— нет",
 
+	// Daily subscription (scheduled daily standup)
+	"btn.daily_sub":             "⏰ Подписка на Daily",
+	"daily_sub.title":           "*Подписка на Daily*\n\nБот будет присылать daily в этот чат каждый день в выбранное время.",
+	"daily_sub.current":         "\n\n*Текущая:* `%s` (%s)",
+	"daily_sub.none":            "\n\n_Подписка не оформлена._",
+	"daily_sub.choose_time":     "Выберите время или нажмите *Своё*, чтобы ввести вручную:",
+	"daily_sub.btn_custom":      "⌨ Своё время",
+	"daily_sub.btn_unsubscribe": "🚫 Отписаться",
+	"daily_sub.btn_timezone":    "🌍 Часовой пояс (%s)",
+	"daily_sub.enter_time":      "Введите время в формате `ЧЧ:ММ` (например, `09:30`).",
+	"daily_sub.enter_timezone":  "Введите IANA-название часового пояса (например, `Europe/Moscow`, `Asia/Tbilisi`, `UTC`).",
+	"daily_sub.invalid_time":    "Неверное время. Используйте формат `ЧЧ:ММ`.",
+	"daily_sub.invalid_tz":      "Неверный часовой пояс. Используйте IANA-имя, например `Europe/Moscow`.",
+	"daily_sub.created":         "✅ Подписка на daily включена: `%s` (%s).",
+	"daily_sub.updated":         "✅ Подписка на daily обновлена: `%s` (%s).",
+	"daily_sub.removed":         "Подписка на daily отключена.",
+	"daily_sub.tz_saved":        "Часовой пояс сохранён. Теперь выберите время:",
+	"daily_sub.save_failed":     "Не удалось сохранить подписку. Попробуйте ещё раз.",
+	"daily_sub.report_name":     "Daily",
+
 	// Sprint
 	"btn.sprint":               "🏃 Отчёт по спринту",
 	"sprint.enter_project":     "Введите ключ проекта (напр. `PROJ`):",

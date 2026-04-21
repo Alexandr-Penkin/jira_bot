@@ -10,6 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"SleepJiraBot/internal/daily"
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
@@ -169,26 +170,50 @@ func (s *Scheduler) executeReport(report storage.ScheduledReport) {
 		return
 	}
 
-	result, err := s.jiraClient.SearchIssues(ctx, user, report.JQL, reportMaxResults)
-	if err != nil {
-		s.log.Error().Err(err).Str("report", report.ReportName).Msg("failed to execute report JQL")
-		if sendErr := s.notifier.Send(ctx, notifier.Request{
-			ChatID:     report.TelegramChatID,
-			TelegramID: report.TelegramUserID,
-			Text: locale.T(lang, "report.failed",
-				format.EscapeMarkdown(report.ReportName),
-				"Jira query failed",
-			),
-			ParseMode: "Markdown",
-			DedupKey:  fmt.Sprintf("scheduler:failed:%s:%d", report.ID.Hex(), time.Now().Unix()),
-			Reason:    "scheduler:query_failed",
-		}); sendErr != nil {
-			s.log.Error().Err(sendErr).Msg("failed to send report error notification")
+	var text string
+	switch report.Kind {
+	case storage.ScheduleKindDaily:
+		built, buildErr := daily.Build(ctx, s.jiraClient, user, lang, "")
+		if buildErr != nil {
+			s.log.Error().Err(buildErr).Str("report", report.ReportName).Msg("failed to build daily report")
+			if sendErr := s.notifier.Send(ctx, notifier.Request{
+				ChatID:     report.TelegramChatID,
+				TelegramID: report.TelegramUserID,
+				Text: locale.T(lang, "report.failed",
+					format.EscapeMarkdown(report.ReportName),
+					"Jira query failed",
+				),
+				ParseMode: "Markdown",
+				DedupKey:  fmt.Sprintf("scheduler:failed:%s:%d", report.ID.Hex(), time.Now().Unix()),
+				Reason:    "scheduler:daily_failed",
+			}); sendErr != nil {
+				s.log.Error().Err(sendErr).Msg("failed to send daily error notification")
+			}
+			return
 		}
-		return
+		text = built
+	default:
+		result, err := s.jiraClient.SearchIssues(ctx, user, report.JQL, reportMaxResults)
+		if err != nil {
+			s.log.Error().Err(err).Str("report", report.ReportName).Msg("failed to execute report JQL")
+			if sendErr := s.notifier.Send(ctx, notifier.Request{
+				ChatID:     report.TelegramChatID,
+				TelegramID: report.TelegramUserID,
+				Text: locale.T(lang, "report.failed",
+					format.EscapeMarkdown(report.ReportName),
+					"Jira query failed",
+				),
+				ParseMode: "Markdown",
+				DedupKey:  fmt.Sprintf("scheduler:failed:%s:%d", report.ID.Hex(), time.Now().Unix()),
+				Reason:    "scheduler:query_failed",
+			}); sendErr != nil {
+				s.log.Error().Err(sendErr).Msg("failed to send report error notification")
+			}
+			return
+		}
+		text = s.formatReport(lang, &report, result)
 	}
 
-	text := s.formatReport(lang, &report, result)
 	if err := s.notifier.Send(ctx, notifier.Request{
 		ChatID:     report.TelegramChatID,
 		TelegramID: report.TelegramUserID,

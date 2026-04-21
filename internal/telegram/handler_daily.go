@@ -4,21 +4,20 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"SleepJiraBot/internal/format"
-	"SleepJiraBot/internal/jira"
+	"SleepJiraBot/internal/daily"
 	"SleepJiraBot/internal/locale"
 	"SleepJiraBot/internal/storage"
 )
 
-const (
-	dailyMaxResults     = 50
-	userSearchMaxResult = 10
-)
+func yesterdayStr() string {
+	return time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+}
+
+const userSearchMaxResult = 10
 
 var jiraAccountIDRe = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)
 
@@ -31,25 +30,7 @@ func (h *Handler) handleDaily(ctx context.Context, chatID, userID int64) tgbotap
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected"))
 	}
 
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-
-	doneJQL := user.DailyDoneJQL
-	if doneJQL == "" {
-		doneJQL = fmt.Sprintf(
-			"\"Developer[User Picker (single user)]\" = currentUser() AND updated >= %q AND status IN (Closed, \"Code review\", \"Ready for testing\", \"Ready for release\") ORDER BY updated DESC",
-			yesterday,
-		)
-	}
-	doingJQL := user.DailyDoingJQL
-	if doingJQL == "" {
-		doingJQL = "\"Developer[User Picker (single user)]\" = currentUser() AND status = \"In Progress\" ORDER BY updated DESC"
-	}
-	planJQL := user.DailyPlanJQL
-	if planJQL == "" {
-		planJQL = "assignee = currentUser() AND status = \"Ready for development\" AND type IN (\"Dev Task\", Bug) ORDER BY updated DESC"
-	}
-
-	return h.buildDailyMessage(ctx, chatID, lang, user, "", doneJQL, doingJQL, planJQL)
+	return h.buildDailyReply(ctx, chatID, lang, user, "")
 }
 
 // handleDailyUser generates a daily standup for a specific Jira user by accountId.
@@ -65,38 +46,33 @@ func (h *Handler) handleDailyUser(ctx context.Context, chatID, userID int64, acc
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected"))
 	}
 
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-
 	doneJQL := fmt.Sprintf(
 		"status changed BY %q AFTER %q ORDER BY updated DESC",
-		accountID, yesterday,
+		accountID, yesterdayStr(),
 	)
 	doingJQL := fmt.Sprintf(
 		"assignee=%q AND statusCategory=\"In Progress\" ORDER BY updated DESC",
 		accountID,
 	)
 
-	return h.buildDailyMessage(ctx, chatID, lang, user, displayName, doneJQL, doingJQL, "")
-}
-
-func (h *Handler) buildDailyMessage(ctx context.Context, chatID int64, lang locale.Lang, user *storage.User, displayName, doneJQL, doingJQL, planJQL string) tgbotapi.MessageConfig {
-	doneResult, doneErr := h.jiraAPI.SearchIssues(ctx, user, doneJQL, dailyMaxResults)
-	doingResult, doingErr := h.jiraAPI.SearchIssues(ctx, user, doingJQL, dailyMaxResults)
-
-	var planResult *jira.SearchResult
-	var planErr error
-	if planJQL != "" {
-		planResult, planErr = h.jiraAPI.SearchIssues(ctx, user, planJQL, dailyMaxResults)
-	}
-
-	if doneErr != nil && doingErr != nil && (planJQL == "" || planErr != nil) {
-		h.log.Error().Err(doneErr).Msg("daily: failed to search done issues")
-		h.log.Error().Err(doingErr).Msg("daily: failed to search in-progress issues")
+	text, err := daily.BuildWithJQL(ctx, h.jiraAPI, user, lang, displayName, doneJQL, doingJQL, "")
+	if err != nil {
+		h.log.Error().Err(err).Str("account_id", accountID).Msg("daily: failed to build standup for user")
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "daily.failed"))
 	}
+	return dailyMessage(chatID, text)
+}
 
-	text := formatDaily(lang, user.JiraSiteURL, displayName, doneResult, doingResult, planResult)
+func (h *Handler) buildDailyReply(ctx context.Context, chatID int64, lang locale.Lang, user *storage.User, displayName string) tgbotapi.MessageConfig {
+	text, err := daily.Build(ctx, h.jiraAPI, user, lang, displayName)
+	if err != nil {
+		h.log.Error().Err(err).Msg("daily: failed to build standup")
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "daily.failed"))
+	}
+	return dailyMessage(chatID, text)
+}
 
+func dailyMessage(chatID int64, text string) tgbotapi.MessageConfig {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.DisableWebPagePreview = true
@@ -180,60 +156,4 @@ func (h *Handler) handleDailyCallback(ctx context.Context, cq *tgbotapi.Callback
 
 	msg := h.handleDailyUser(ctx, cq.Message.Chat.ID, cq.From.ID, accountID, displayName)
 	h.sendMessage(withMenuButton(msg, lang))
-}
-
-func formatDaily(lang locale.Lang, siteURL, displayName string, done, doing, plan *jira.SearchResult) string {
-	var sb strings.Builder
-
-	if displayName != "" {
-		fmt.Fprintf(&sb, "#daily (%s)\n", format.EscapeMarkdown(displayName))
-	} else {
-		sb.WriteString("#daily\n")
-	}
-
-	// Done
-	sb.WriteString("\n")
-	sb.WriteString(locale.T(lang, "daily.done"))
-	sb.WriteString(":\n")
-	if done == nil || len(done.Issues) == 0 {
-		sb.WriteString(locale.T(lang, "daily.no_done"))
-		sb.WriteString("\n\n")
-	} else {
-		for i := range done.Issues {
-			writeIssueLink(&sb, siteURL, &done.Issues[i])
-		}
-	}
-
-	// Doing\
-	sb.WriteString("\n")
-	sb.WriteString(locale.T(lang, "daily.doing"))
-	sb.WriteString(":\n")
-	if doing == nil || len(doing.Issues) == 0 {
-		sb.WriteString(locale.T(lang, "daily.no_doing"))
-		sb.WriteString("\n\n")
-	} else {
-		for i := range doing.Issues {
-			writeIssueLink(&sb, siteURL, &doing.Issues[i])
-		}
-	}
-
-	// Plan
-	sb.WriteString("\n")
-	sb.WriteString(locale.T(lang, "daily.plan"))
-	sb.WriteString(":\n")
-	if plan != nil && len(plan.Issues) > 0 {
-		for i := range plan.Issues {
-			writeIssueLink(&sb, siteURL, &plan.Issues[i])
-		}
-	} else if plan != nil {
-		sb.WriteString(locale.T(lang, "daily.no_plan"))
-		sb.WriteString("\n\n")
-	}
-
-	return sb.String()
-}
-
-func writeIssueLink(sb *strings.Builder, siteURL string, issue *jira.Issue) {
-	issueURL := fmt.Sprintf("%s/browse/%s", siteURL, issue.Key)
-	fmt.Fprintf(sb, "- [%s](%s) %s\n", issue.Key, issueURL, format.EscapeMarkdown(issue.Fields.Summary))
 }

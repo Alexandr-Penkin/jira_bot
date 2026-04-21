@@ -350,6 +350,8 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleTransitionCallback(ctx, cq, parts)
 	case "daily":
 		h.handleDailyCallback(ctx, cq, parts)
+	case "dailysub_set", "dailysub_custom", "dailysub_tz", "dailysub_off":
+		h.handleDailySubCallback(ctx, cq, parts)
 	case "sub":
 		h.handleSubCallback(ctx, cq, parts)
 	case "sub_filter":
@@ -559,6 +561,8 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 	case "sched":
 		h.states.Set(userID, "schedule", nil)
 		h.sendPrompt(chatID, locale.T(lang, "schedule.enter"), lang)
+	case "dailysub":
+		h.handleDailySubMenu(ctx, chatID, userID)
 	case "unsched":
 		h.sendMessage(withMenuButton(h.handleUnschedule(ctx, chatID, userID), lang))
 	case "scheds":
@@ -768,6 +772,12 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	case "schedule":
 		h.states.Clear(userID)
 		h.sendMessage(withMenuButton(h.handleSchedule(ctx, chatID, userID, text), lang))
+
+	case dailySubStateCustom:
+		h.handleDailySubTimeInput(ctx, chatID, userID, lang, text)
+
+	case dailySubStateTZ:
+		h.handleDailySubTZInput(ctx, chatID, userID, lang, text)
 
 	case "create_project":
 		h.handleCreateProjectInput(ctx, chatID, userID, text)

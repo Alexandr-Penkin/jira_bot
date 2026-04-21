@@ -266,6 +266,26 @@ var en = map[string]string{
 	"daily_jql.reset":       "Daily JQL reset to defaults.",
 	"daily.no_plan":         "— none",
 
+	// Daily subscription (scheduled daily standup)
+	"btn.daily_sub":             "⏰ Daily Subscription",
+	"daily_sub.title":           "*Daily Subscription*\n\nThe bot will send your daily standup to this chat at the chosen time every day.",
+	"daily_sub.current":         "\n\n*Current:* `%s` (%s)",
+	"daily_sub.none":            "\n\n_No active subscription._",
+	"daily_sub.choose_time":     "Choose a time or tap *Custom* to enter one:",
+	"daily_sub.btn_custom":      "⌨ Custom time",
+	"daily_sub.btn_unsubscribe": "🚫 Unsubscribe",
+	"daily_sub.btn_timezone":    "🌍 Timezone (%s)",
+	"daily_sub.enter_time":      "Enter time in 24h `HH:MM` format (e.g. `09:30`).",
+	"daily_sub.enter_timezone":  "Enter IANA timezone name (e.g. `Europe/Moscow`, `Asia/Tbilisi`, `UTC`).",
+	"daily_sub.invalid_time":    "Invalid time. Use `HH:MM` in 24h format.",
+	"daily_sub.invalid_tz":      "Invalid timezone. Use an IANA name like `Europe/Moscow`.",
+	"daily_sub.created":         "✅ Daily subscription set to `%s` (%s).",
+	"daily_sub.updated":         "✅ Daily subscription updated to `%s` (%s).",
+	"daily_sub.removed":         "Daily subscription removed.",
+	"daily_sub.tz_saved":        "Timezone saved. Now pick a time:",
+	"daily_sub.save_failed":     "Failed to save subscription. Please try again.",
+	"daily_sub.report_name":     "Daily",
+
 	// Sprint
 	"btn.sprint":               "🏃 Sprint Report",
 	"sprint.enter_project":     "Enter project key (e.g. `PROJ`):",
