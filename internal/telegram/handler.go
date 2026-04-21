@@ -394,6 +394,10 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDailyJQLReset(ctx, cq)
 	case "cr":
 		h.handleCreateCallback(ctx, cq, parts)
+	case createFastEpicCallback:
+		h.handleCreateFastEpicCallback(ctx, cq, parts)
+	case createFastConfirmCallback:
+		h.handleCreateFastConfirmCallback(ctx, cq, parts)
 	case "issue_action":
 		h.handleIssueActionCallback(ctx, cq, parts)
 	case "adm":
@@ -602,7 +606,10 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		if match := jiraURLRe.FindStringSubmatch(text); match != nil {
 			issueKey := match[1]
 			h.handleJiraLink(ctx, message.Chat.ID, userID, issueKey)
+			return
 		}
+		// Default intent: treat any plain text as a /createfast shortcut.
+		h.createFast(ctx, chatID, userID, text, nil)
 		return
 	}
 

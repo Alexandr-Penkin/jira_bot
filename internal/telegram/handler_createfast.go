@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +17,13 @@ import (
 	"SleepJiraBot/internal/storage"
 )
 
-const createFastCommand = "createfast"
+const (
+	createFastCommand         = "createfast"
+	createFastEpicPending     = "createfast_epic_pending"
+	createFastEpicCallback    = "cf_epic"
+	createFastConfirmPending  = "createfast_confirm_pending"
+	createFastConfirmCallback = "cf_cfm"
+)
 
 // createFastFile carries everything the handler needs to upload a single
 // attachment to Jira. Populated by extractCreateFastFiles.
@@ -119,10 +126,158 @@ func (h *Handler) createFast(ctx context.Context, chatID, userID int64, args str
 		fields["description"] = buildADFFromText(description)
 	}
 
+	epicFieldID, _ := h.fillRequiredDefaults(ctx, user, fields)
+
+	h.showCreateFastConfirmation(ctx, chatID, userID, user, fields, files, epicFieldID, summary, description, lang)
+}
+
+// showCreateFastConfirmation renders a preview of the about-to-be-created
+// issue and asks the user to confirm. Nothing hits Jira until the user taps
+// the Create button.
+func (h *Handler) showCreateFastConfirmation(ctx context.Context, chatID, userID int64, user *storage.User, fields map[string]interface{}, files []createFastFile, epicFieldID, summary, description string, lang locale.Lang) {
+	payloadJSON, err := json.Marshal(fields)
+	if err != nil {
+		h.log.Error().Err(err).Msg("createfast: marshal payload for confirmation failed")
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
+		return
+	}
+	filesJSON, err := json.Marshal(files)
+	if err != nil {
+		h.log.Error().Err(err).Msg("createfast: marshal files for confirmation failed")
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
+		return
+	}
+
+	h.states.Set(userID, createFastConfirmPending, map[string]string{
+		"payload":       string(payloadJSON),
+		"files":         string(filesJSON),
+		"epic_field_id": epicFieldID,
+		"summary":       summary,
+		"description":   description,
+	})
+
+	typeLabel := user.DefaultIssueTypeName
+	if typeLabel == "" {
+		typeLabel = user.DefaultIssueTypeID
+	}
+
+	var sb strings.Builder
+	sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "createfast.confirm_title")))
+	sb.WriteString("\n\n")
+	sb.WriteString("*")
+	sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "createfast.confirm_project")))
+	sb.WriteString(":* ")
+	sb.WriteString(format.EscapeMarkdownV2(user.DefaultProject))
+	sb.WriteString("\n*")
+	sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "createfast.confirm_type")))
+	sb.WriteString(":* ")
+	sb.WriteString(format.EscapeMarkdownV2(typeLabel))
+	sb.WriteString("\n*")
+	sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "createfast.confirm_summary")))
+	sb.WriteString(":* ")
+	sb.WriteString(format.EscapeMarkdownV2(summary))
+	sb.WriteString("\n")
+
+	if description != "" {
+		preview := format.TruncateRunes(description, 500)
+		sb.WriteString("*")
+		sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "createfast.confirm_description")))
+		sb.WriteString(":*\n")
+		sb.WriteString(format.EscapeMarkdownV2(preview))
+		sb.WriteString("\n")
+	}
+
+	if len(files) > 0 {
+		sb.WriteString("*")
+		sb.WriteString(format.EscapeMarkdownV2(locale.T(lang, "createfast.confirm_attachments")))
+		sb.WriteString(":* ")
+		sb.WriteString(format.EscapeMarkdownV2(fmt.Sprintf("%d", len(files))))
+		sb.WriteString("\n")
+	}
+
+	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ParseMode = tgbotapi.ModeMarkdownV2
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "createfast.confirm_btn_go"), createFastConfirmCallback+":go"),
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "createfast.confirm_btn_cancel"), createFastConfirmCallback+":cancel"),
+		),
+	)
+	h.sendMessage(msg)
+}
+
+// handleCreateFastConfirmCallback resumes the flow after the user confirms
+// or cancels the preview.
+func (h *Handler) handleCreateFastConfirmCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
+	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
+
+	chatID := cq.Message.Chat.ID
+	userID := cq.From.ID
+	lang := h.getLang(ctx, userID)
+
+	step, data := h.states.Get(userID)
+	if step != createFastConfirmPending {
+		return
+	}
+	if len(parts) < 2 {
+		return
+	}
+
+	if parts[1] == "cancel" {
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "action.cancelled")))
+		return
+	}
+	if parts[1] != "go" {
+		return
+	}
+
+	var fields map[string]interface{}
+	if err := json.Unmarshal([]byte(data["payload"]), &fields); err != nil {
+		h.log.Error().Err(err).Msg("createfast: unmarshal payload for confirmation failed")
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
+		return
+	}
+	var files []createFastFile
+	if raw := data["files"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &files); err != nil {
+			h.log.Warn().Err(err).Msg("createfast: unmarshal files for confirmation failed (continuing without)")
+		}
+	}
+	epicFieldID := data["epic_field_id"]
+
+	user, err := h.requireAuth(ctx, userID)
+	if err != nil {
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected")))
+		return
+	}
+
+	h.states.Clear(userID)
+	h.createFastFinalize(ctx, chatID, userID, user, fields, files, epicFieldID, lang)
+}
+
+// createFastFinalize calls CreateIssue and either posts the success message
+// + uploads attachments, or — when Jira reports a missing required Epic —
+// stashes state and launches the epic picker for a one-tap retry.
+func (h *Handler) createFastFinalize(ctx context.Context, chatID, userID int64, user *storage.User, fields map[string]interface{}, files []createFastFile, epicFieldID string, lang locale.Lang) {
 	resp, err := h.jiraAPI.CreateIssue(ctx, user, fields)
 	if err != nil {
 		h.log.Error().Err(err).Msg("createfast: create issue failed")
-		if detail := extractJiraErrorDetail(err); detail != "" {
+		detail := extractJiraErrorDetail(err)
+		if detail != "" && isEpicRequiredError(detail) {
+			if _, already := fields["parent"]; !already {
+				if epicFieldID == "" {
+					epicFieldID = "parent"
+				}
+				h.stashCreateFastForEpic(userID, fields, files, epicFieldID)
+				h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.epic_required_retry")))
+				h.showCreateFastEpicPicker(ctx, chatID, userID, user, user.DefaultProject, lang)
+				return
+			}
+		}
+		if detail != "" {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_detail", detail)))
 			return
 		}
@@ -140,6 +295,120 @@ func (h *Handler) createFast(ctx context.Context, chatID, userID int64, args str
 	for _, f := range files {
 		h.uploadCreateFastFile(ctx, chatID, user, resp.Key, f, lang)
 	}
+}
+
+// stashCreateFastForEpic serialises the in-flight CreateIssue payload plus
+// any pending Telegram attachments so the epic-callback can resume work
+// without re-running fillRequiredDefaults or re-asking the user for input.
+func (h *Handler) stashCreateFastForEpic(userID int64, fields map[string]interface{}, files []createFastFile, epicFieldID string) {
+	payloadJSON, err := json.Marshal(fields)
+	if err != nil {
+		h.log.Error().Err(err).Msg("createfast: marshal payload for epic pending failed")
+		return
+	}
+	filesJSON, err := json.Marshal(files)
+	if err != nil {
+		h.log.Error().Err(err).Msg("createfast: marshal files for epic pending failed")
+		return
+	}
+	h.states.Set(userID, createFastEpicPending, map[string]string{
+		"payload":       string(payloadJSON),
+		"files":         string(filesJSON),
+		"epic_field_id": epicFieldID,
+	})
+}
+
+// showCreateFastEpicPicker lists active epics in the project as inline
+// buttons so the user can attach one without typing.
+func (h *Handler) showCreateFastEpicPicker(ctx context.Context, chatID, userID int64, user *storage.User, projectKey string, lang locale.Lang) {
+	jql := fmt.Sprintf(`project = %q AND issuetype = Epic AND statusCategory != Done ORDER BY updated DESC`, projectKey)
+	result, err := h.jiraAPI.SearchIssues(ctx, user, jql, maxEpicOptions)
+	if err != nil {
+		h.log.Error().Err(err).Msg("createfast: failed to load epics")
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_epics")))
+		return
+	}
+
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(result.Issues)+1)
+	for i := range result.Issues {
+		issue := &result.Issues[i]
+		label := format.TruncateRunes(fmt.Sprintf("%s — %s", issue.Key, issue.Fields.Summary), 47)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, createFastEpicCallback+":"+issue.Key),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.cancel"), createFastEpicCallback+":cancel"),
+	))
+
+	prompt := "create.choose_epic"
+	if len(result.Issues) == 0 {
+		prompt = "create.no_epics"
+	}
+	msg := tgbotapi.NewMessage(chatID, locale.T(lang, prompt))
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	h.sendMessage(msg)
+}
+
+// handleCreateFastEpicCallback resumes a /createfast flow after the user
+// picks an epic (or cancels) from the inline picker.
+func (h *Handler) handleCreateFastEpicCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
+	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
+
+	chatID := cq.Message.Chat.ID
+	userID := cq.From.ID
+	lang := h.getLang(ctx, userID)
+
+	step, data := h.states.Get(userID)
+	if step != createFastEpicPending {
+		return
+	}
+	if len(parts) < 2 {
+		return
+	}
+
+	if parts[1] == "cancel" {
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "action.cancelled")))
+		return
+	}
+
+	epicKey := parts[1]
+	epicFieldID := data["epic_field_id"]
+	if epicFieldID == "" {
+		epicFieldID = "parent"
+	}
+
+	var fields map[string]interface{}
+	if err := json.Unmarshal([]byte(data["payload"]), &fields); err != nil {
+		h.log.Error().Err(err).Msg("createfast: unmarshal payload for epic retry failed")
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
+		return
+	}
+	var files []createFastFile
+	if raw := data["files"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &files); err != nil {
+			h.log.Warn().Err(err).Msg("createfast: unmarshal files for epic retry failed (continuing without)")
+		}
+	}
+
+	if epicFieldID == "parent" {
+		fields["parent"] = map[string]string{"key": epicKey}
+	} else {
+		fields[epicFieldID] = epicKey
+	}
+
+	user, err := h.requireAuth(ctx, userID)
+	if err != nil {
+		h.states.Clear(userID)
+		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected")))
+		return
+	}
+
+	h.states.Clear(userID)
+	h.createFastFinalize(ctx, chatID, userID, user, fields, files, epicFieldID, lang)
 }
 
 // splitCreateFastArgs returns (summary, description). The first non-empty
@@ -238,6 +507,87 @@ func (h *Handler) uploadCreateFastFile(ctx context.Context, chatID int64, user *
 		format.EscapeMarkdownV2(issueKey)))
 	msg.ParseMode = tgbotapi.ModeMarkdownV2
 	h.sendMessage(msg)
+}
+
+// fillRequiredDefaults queries create-meta for the chosen project/issue type
+// and auto-populates any required custom field that has an allowed-value
+// list by selecting the first allowed value. This keeps /createfast a
+// single-shot command on projects with mandatory selectors (e.g. "Продукт")
+// without forcing users into an interactive wizard. Returns the id of a
+// required epic-link field when one is detected — the caller surfaces that
+// to the epic picker wizard instead of auto-filling (picking "first allowed
+// epic" silently would attach the task to the wrong parent).
+func (h *Handler) fillRequiredDefaults(ctx context.Context, user *storage.User, fields map[string]interface{}) (epicFieldID string, _ error) {
+	metaFields, err := h.jiraAPI.GetCreateMetaFields(ctx, user, user.DefaultProject, user.DefaultIssueTypeID)
+	if err != nil {
+		h.log.Warn().Err(err).Str("project", user.DefaultProject).Msg("createfast: could not fetch createmeta fields")
+		return "", nil
+	}
+
+	for i := range metaFields {
+		f := &metaFields[i]
+		if !f.Required {
+			continue
+		}
+		if _, already := fields[f.FieldID]; already {
+			continue
+		}
+		if isEpicLinkField(f) {
+			if epicFieldID == "" {
+				epicFieldID = f.FieldID
+			}
+			continue
+		}
+		if len(f.AllowedValues) == 0 {
+			continue
+		}
+
+		first := f.AllowedValues[0]
+		if first.ID == "" {
+			continue
+		}
+
+		switch f.Schema.Type {
+		case "array":
+			fields[f.FieldID] = []map[string]string{{"id": first.ID}}
+		case "option", "priority", "issuetype", "project", "user", "group", "resolution":
+			fields[f.FieldID] = map[string]string{"id": first.ID}
+		default:
+			// For untyped or string-like fields with allowed values, Jira
+			// commonly accepts the id-wrapped form too.
+			fields[f.FieldID] = map[string]string{"id": first.ID}
+		}
+
+		h.log.Info().
+			Str("field_id", f.FieldID).
+			Str("field_name", f.Name).
+			Str("value_id", first.ID).
+			Str("value_name", first.Name).
+			Msg("createfast: auto-filled required field with first allowed value")
+	}
+
+	return epicFieldID, nil
+}
+
+// isEpicLinkField detects required epic-link fields so they bypass silent
+// auto-fill and instead route through the epic picker wizard.
+func isEpicLinkField(f *jira.CreateMetaField) bool {
+	if f == nil {
+		return false
+	}
+	if f.Schema.Custom == "com.pyxis.greenhopper.jira:gh-epic-link" {
+		return true
+	}
+	if f.Key == "customfield_10014" || f.FieldID == "customfield_10014" {
+		return true
+	}
+	if f.FieldID == "parent" && strings.EqualFold(f.Schema.Type, "issuelink") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(f.Name), "epic") {
+		return true
+	}
+	return false
 }
 
 // preferredDefaultIssueTypes lists the issue-type names we try to pick, in

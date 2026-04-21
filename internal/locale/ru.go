@@ -36,6 +36,7 @@ var ru = map[string]string{
 		"/schedule `cron | имя | JQL` — Создать отчёт по расписанию\n" +
 		"/unschedule — Удалить все расписания\n" +
 		"/schedules — Список расписаний\n\n" +
+		"💡 *Подсказка:* Отправьте любое сообщение — и я предложу создать из него задачу в Jira.\n" +
 		"Или нажмите /start для вызова меню с кнопками.",
 
 	// Language
@@ -478,10 +479,18 @@ var ru = map[string]string{
 	"btn.skip":                    "Пропустить",
 
 	// Createfast (быстрое создание задач)
-	"createfast.no_defaults":      "Сначала задайте проект и тип задачи по умолчанию через /defaults.",
-	"createfast.auto_issue_type":  "ℹ️ Тип задачи по умолчанию не задан. Использую *%s* — изменить через /defaults.",
-	"createfast.summary_empty":    "Нужен заголовок. Используйте: `/createfast Заголовок\nОписание (необязательно).`",
-	"createfast.attached":         "📎 Прикреплено к %s.",
-	"createfast.attach_failed":    "Не удалось прикрепить файл: %s",
-	"createfast.unsupported_file": "Поддерживаются только картинки в виде вложения.",
+	"createfast.no_defaults":         "Сначала задайте проект и тип задачи по умолчанию через /defaults.",
+	"createfast.auto_issue_type":     "ℹ️ Тип задачи по умолчанию не задан. Использую *%s* — изменить через /defaults.",
+	"createfast.summary_empty":       "Нужен заголовок. Используйте: `/createfast Заголовок\nОписание (необязательно).`",
+	"createfast.attached":            "📎 Прикреплено к %s.",
+	"createfast.attach_failed":       "Не удалось прикрепить файл: %s",
+	"createfast.unsupported_file":    "Поддерживаются только картинки в виде вложения.",
+	"createfast.confirm_title":       "Создать эту задачу?",
+	"createfast.confirm_project":     "Проект",
+	"createfast.confirm_type":        "Тип",
+	"createfast.confirm_summary":     "Заголовок",
+	"createfast.confirm_description": "Описание",
+	"createfast.confirm_attachments": "Вложения",
+	"createfast.confirm_btn_go":      "✅ Создать",
+	"createfast.confirm_btn_cancel":  "❌ Отмена",
 }

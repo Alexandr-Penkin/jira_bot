@@ -36,6 +36,7 @@ var en = map[string]string{
 		"/schedule `cron | name | JQL` — Create a scheduled report\n" +
 		"/unschedule — Remove all schedules in this chat\n" +
 		"/schedules — List active schedules\n\n" +
+		"💡 *Tip:* Send any plain text and I'll offer to create a Jira task from it.\n" +
 		"Or use /start to open the button menu.",
 
 	// Language
@@ -478,10 +479,18 @@ var en = map[string]string{
 	"btn.skip":                    "Skip",
 
 	// Createfast (quick issue creation)
-	"createfast.no_defaults":      "Set a default project and issue type via /defaults first.",
-	"createfast.auto_issue_type":  "ℹ️ No default issue type set. Using *%s* — change via /defaults.",
-	"createfast.summary_empty":    "Summary is required. Usage: `/createfast Summary line\nOptional description.`",
-	"createfast.attached":         "📎 Attached to %s.",
-	"createfast.attach_failed":    "Failed to attach file: %s",
-	"createfast.unsupported_file": "Only image attachments are supported.",
+	"createfast.no_defaults":         "Set a default project and issue type via /defaults first.",
+	"createfast.auto_issue_type":     "ℹ️ No default issue type set. Using *%s* — change via /defaults.",
+	"createfast.summary_empty":       "Summary is required. Usage: `/createfast Summary line\nOptional description.`",
+	"createfast.attached":            "📎 Attached to %s.",
+	"createfast.attach_failed":       "Failed to attach file: %s",
+	"createfast.unsupported_file":    "Only image attachments are supported.",
+	"createfast.confirm_title":       "Create this task?",
+	"createfast.confirm_project":     "Project",
+	"createfast.confirm_type":        "Type",
+	"createfast.confirm_summary":     "Summary",
+	"createfast.confirm_description": "Description",
+	"createfast.confirm_attachments": "Attachments",
+	"createfast.confirm_btn_go":      "✅ Create",
+	"createfast.confirm_btn_cancel":  "❌ Cancel",
 }
