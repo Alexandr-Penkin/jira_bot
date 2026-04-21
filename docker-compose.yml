@@ -199,6 +199,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
       TELEGRAM_SVC_ADDR: ":8084"
       ENABLE_EVENT_PUBLISH: "true"
@@ -209,6 +210,7 @@ services:
         condition: service_healthy
     networks:
       - default
+      - mongo_net
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8084/healthz"]
       interval: 10s
