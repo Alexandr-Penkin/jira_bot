@@ -4,14 +4,16 @@ Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issue
 
 ## Features
 
-- **Jira OAuth 2.0** — secure authentication with encrypted token storage (AES-256-GCM)
+- **Jira OAuth 2.0** — secure authentication with encrypted token storage (AES-256-GCM), auto-refresh, multi-site (Atlassian resources) support
 - **Issue management** — view, comment, transition, and assign issues
 - **Issue creation** — interactive wizard with Epic linking, Templates selector (tap-to-copy body), priority/assignee pickers, reusable templates, and quick-create syntax
-- **Subscriptions** — real-time notifications on issue/project changes (polling + webhooks)
+- **Instant create (`/createfast`)** — turn any text or photo/file caption into a Jira issue with the attachment uploaded, Epic selection, and one-tap confirmation. Any plain message is treated as a `/createfast` shortcut
+- **Subscriptions** — real-time notifications on issue/project changes via polling and signed Jira webhooks (HMAC-SHA256)
 - **Sprint reports** — view sprint boards and progress
 - **Scheduled reports** — cron-based JQL/sprint reports delivered to chats
+- **Daily standups** — quick view of assigned issues for you or teammates, plus a scheduled daily standup subscription with timezone support
+- **Defaults** — per-user defaults for project, board, and issue type via `/defaults`
 - **Multilingual** — English and Russian
-- **Daily standups** — quick view of assigned issues for you or teammates
 
 ## Bot Commands
 
@@ -28,13 +30,14 @@ Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issue
 | `/assign <KEY>` | Assign issue to self |
 | `/create` | Interactive issue creation wizard |
 | `/create <PROJECT> <Type> \| <Summary> \| <Description>` | Quick-create issue |
+| `/createfast [summary]` | Instant create — text or photo/file with caption becomes an issue with attachment |
 | `/sprint [PROJECT] [BOARD] [SPRINT]` | Sprint board |
 | `/filters` | Jira saved filters |
 | `/watch` / `/unwatch` | Subscribe/unsubscribe to changes |
 | `/subscriptions` | List active subscriptions |
 | `/schedule <cron>` | Create scheduled report |
 | `/unschedule` / `/schedules` | Manage scheduled reports |
-| `/defaults` | Set default project/board |
+| `/defaults` | Set default project, board, and issue type |
 | `/lang` | Switch language |
 | `/help` | Help |
 
@@ -76,7 +79,7 @@ This starts the bot and MongoDB 7 via Docker Compose.
 | `JIRA_CLIENT_SECRET` | yes | — | Jira OAuth 2.0 client secret |
 | `ENCRYPTION_KEY` | yes | — | 64 hex chars (32 bytes) for AES-256-GCM |
 | `JIRA_REDIRECT_URI` | no | `http://localhost:8080/callback` | OAuth callback URL |
-| `JIRA_WEBHOOK_SECRET` | yes | — | Webhook signature verification (HMAC-SHA256) |
+| `JIRA_WEBHOOK_SECRET` | no | — | Webhook signature verification (HMAC-SHA256) |
 | `MONGO_URI` | no | `mongodb://localhost:27017` | MongoDB connection string |
 | `MONGO_DB` | no | `sleepjirabot` | Database name |
 | `CALLBACK_ADDR` | no | `:8080` | HTTP server address |

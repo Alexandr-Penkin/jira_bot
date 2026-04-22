@@ -262,7 +262,7 @@
         <header>
             <img class="logo" src="/jira-bot/logo.jpeg" alt="SleepJiraBot">
             <h1>Sleep<span>Jira</span>Bot</h1>
-            <p class="tagline">Управляй задачами Jira прямо из Telegram. Подписки, спринты, отчёты — без переключения контекста.</p>
+            <p class="tagline">Управляй задачами Jira прямо из Telegram. Мгновенное создание со скриншотами, подписки в реальном времени, спринты, дейли и отчёты по расписанию — без переключения контекста.</p>
         </header>
 
         <div class="cta">
@@ -273,27 +273,37 @@
             <div class="feature">
                 <div class="feature-icon">&#128279;</div>
                 <h3>OAuth-авторизация Jira</h3>
-                <p>Безопасное подключение к Jira Cloud через OAuth 2.0. Поддержка нескольких сайтов Atlassian.</p>
+                <p>Безопасное подключение к Jira Cloud через OAuth 2.0. Поддержка нескольких сайтов Atlassian, автоматический refresh токенов.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#9889;</div>
+                <h3>Мгновенное создание (/createfast)</h3>
+                <p>Отправь текст, фото или файл с подписью — бот создаст задачу в Jira с вложением. Подтверждение, выбор Epic и автодозаполнение дефолтов.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">&#128276;</div>
-                <h3>Подписки на обновления</h3>
-                <p>Следи за задачами, проектами и фильтрами. Получай уведомления о новых задачах, упоминаниях и изменениях статуса.</p>
+                <h3>Подписки и вебхуки</h3>
+                <p>Уведомления о новых задачах, упоминаниях и смене статусов — в реальном времени через вебхуки Jira (HMAC-SHA256) и поллинг.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">&#127939;</div>
-                <h3>Спринты и дэйли</h3>
-                <p>Просматривай активные спринты и получай сводку по своим задачам на сегодня одной командой.</p>
+                <h3>Спринты и дейли-стендап</h3>
+                <p>Доски активных спринтов и сводка по задачам на сегодня. Подписка на ежедневный стендап с учётом твоей таймзоны.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">&#128203;</div>
                 <h3>Отчёты по расписанию</h3>
-                <p>Настрой автоматическую отправку JQL-отчётов по cron-расписанию в любой чат.</p>
+                <p>Автоматическая отправка JQL и спринт-отчётов по cron в любой чат или канал.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">&#9999;&#65039;</div>
-                <h3>Создание и действия с задачами</h3>
-                <p>Пошаговый мастер создания с Epic, приоритетом, исполнителем и шаблонами. Комментируй, меняй статус, назначай — всё из Telegram.</p>
+                <h3>Полный workflow задач</h3>
+                <p>Пошаговый мастер с Epic, приоритетом и исполнителем, комментарии, смена статуса, назначение — всё из Telegram.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#128736;&#65039;</div>
+                <h3>Дефолты и шаблоны</h3>
+                <p>Настрой проект, борд и тип задачи по умолчанию через /defaults. Сохраняй переиспользуемые шаблоны с tap-to-copy телом.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">&#127760;</div>
@@ -317,20 +327,22 @@
             <div class="step">
                 <div class="step-num">3</div>
                 <h3>Работай</h3>
-                <p>Подпишись на проекты, смотри спринты, получай отчёты</p>
+                <p>Создавай задачи из скриншотов, подписывайся на проекты, смотри спринты, настрой дейли и отчёты</p>
             </div>
         </div>
 
         <h2 class="section-title">Команды</h2>
         <div class="commands">
+            <div class="cmd"><code>/start, /menu</code> <span>Главное меню</span></div>
             <div class="cmd"><code>/connect</code> <span>Подключить аккаунт Jira Cloud</span></div>
             <div class="cmd"><code>/disconnect</code> <span>Отключить аккаунт Jira</span></div>
             <div class="cmd"><code>/me</code> <span>Информация о подключённом аккаунте</span></div>
-            <div class="cmd"><code>/daily</code> <span>Сводка задач на сегодня</span></div>
-            <div class="cmd"><code>/sprint</code> <span>Просмотр активного спринта</span></div>
+            <div class="cmd"><code>/daily [username]</code> <span>Сводка задач на сегодня — по себе или коллеге</span></div>
+            <div class="cmd"><code>/sprint [PROJECT] [BOARD]</code> <span>Просмотр активного спринта</span></div>
             <div class="cmd"><code>/issue KEY</code> <span>Детали задачи по ключу</span></div>
             <div class="cmd"><code>/list JQL</code> <span>Поиск задач через JQL-запрос</span></div>
             <div class="cmd"><code>/create</code> <span>Пошаговый мастер создания задачи</span></div>
+            <div class="cmd"><code>/createfast</code> <span>Мгновенное создание: текст или фото/файл с подписью → задача с вложением</span></div>
             <div class="cmd"><code>/comment KEY текст</code> <span>Добавить комментарий к задаче</span></div>
             <div class="cmd"><code>/transition KEY</code> <span>Сменить статус задачи</span></div>
             <div class="cmd"><code>/assign KEY</code> <span>Назначить исполнителя</span></div>
@@ -338,19 +350,23 @@
             <div class="cmd"><code>/unwatch</code> <span>Отписаться от обновлений</span></div>
             <div class="cmd"><code>/subscriptions</code> <span>Список активных подписок</span></div>
             <div class="cmd"><code>/filters</code> <span>Сохранённые Jira-фильтры</span></div>
-            <div class="cmd"><code>/schedule</code> <span>Настроить отчёт по расписанию</span></div>
-            <div class="cmd"><code>/schedules</code> <span>Список отчётов по расписанию</span></div>
+            <div class="cmd"><code>/schedule cron</code> <span>Настроить отчёт по расписанию</span></div>
+            <div class="cmd"><code>/schedules, /unschedule</code> <span>Управление расписаниями</span></div>
+            <div class="cmd"><code>/defaults</code> <span>Проект, борд и тип задачи по умолчанию</span></div>
             <div class="cmd"><code>/lang</code> <span>Переключить язык (ru/en)</span></div>
+            <div class="cmd"><code>/help</code> <span>Справка по всем командам</span></div>
         </div>
 
         <div class="security">
             <h3>&#128272; Безопасность</h3>
-            <p>Токены Jira шифруются AES-256-GCM и хранятся в MongoDB. Бот не хранит пароли и не имеет доступа к данным без вашего OAuth-разрешения.</p>
+            <p>Токены Jira шифруются AES-256-GCM и хранятся в MongoDB. Вебхуки Jira проверяются по подписи HMAC-SHA256. Бот не хранит пароли и не имеет доступа к данным без вашего OAuth-разрешения.</p>
             <div class="badges">
                 <div class="badge">&#10003; OAuth 2.0</div>
                 <div class="badge">&#10003; AES-256-GCM</div>
+                <div class="badge">&#10003; HMAC-SHA256</div>
                 <div class="badge">&#10003; HTTPS</div>
                 <div class="badge">&#10003; Rate limiting</div>
+                <div class="badge">&#10003; Open source (MIT)</div>
             </div>
         </div>
 
