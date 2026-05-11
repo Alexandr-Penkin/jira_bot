@@ -20,6 +20,16 @@ services:
         aliases:
           - bot
 
+  webhook-svc:
+    container_name: webhook-svc
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    networks:
+      caddy_net:
+        aliases:
+          - webhook-svc
+
 networks:
   caddy_net:
     external: true

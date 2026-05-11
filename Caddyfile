@@ -1,4 +1,9 @@
 {$DOMAIN:localhost} {
+	handle /jira-bot/webhook {
+		uri strip_prefix /jira-bot
+		reverse_proxy webhook-svc:8081
+	}
+
 	handle /jira-bot/* {
 		uri strip_prefix /jira-bot
 		reverse_proxy bot:8080
