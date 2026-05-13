@@ -19,8 +19,13 @@ type Config struct {
 	CallbackAddr      string
 	EncryptionKey     string
 	JiraWebhookSecret string
-	AdminTelegramID   int64
-	ProxyURL          string
+	// JiraWebhookURL is the public HTTPS endpoint Jira posts events to.
+	// Passed in the body of POST /rest/api/3/webhook — Atlassian rejects
+	// registrations whose host does not match the OAuth app's configured
+	// base URL.
+	JiraWebhookURL  string
+	AdminTelegramID int64
+	ProxyURL        string
 
 	// Phase 0 of DDD microservices split: event bus alongside the monolith.
 	// NatsURL is consulted only when EnableEventPublish is true.
@@ -143,6 +148,7 @@ func Load() (*Config, error) {
 		CallbackAddr:         getEnvOrDefault("CALLBACK_ADDR", ":8080"),
 		EncryptionKey:        os.Getenv("ENCRYPTION_KEY"),
 		JiraWebhookSecret:    os.Getenv("JIRA_WEBHOOK_SECRET"),
+		JiraWebhookURL:       os.Getenv("JIRA_WEBHOOK_URL"),
 		ProxyURL:             os.Getenv("PROXY_URL"),
 		NatsURL:              getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
 		EmbedWebhookServer:   true,

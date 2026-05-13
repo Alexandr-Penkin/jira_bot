@@ -405,7 +405,7 @@ func startUpdateHandler(
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
 
-	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
+	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, cfg.JiraWebhookURL, log)
 
 	var prefsProvider preferences.Provider
 	if cfg.PreferencesSvcURL != "" && !cfg.EmbedPreferences {

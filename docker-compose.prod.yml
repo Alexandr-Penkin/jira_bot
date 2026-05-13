@@ -5,6 +5,8 @@ services:
     env_file: .env
     environment:
       MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      DEDUP_REDIS_URL: redis://redis:6379/0
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
       interval: 10s
@@ -19,6 +21,9 @@ services:
       caddy_net:
         aliases:
           - bot
+      jira_bot_default:
+        aliases:
+          - bot
 
   webhook-svc:
     build:
@@ -30,6 +35,7 @@ services:
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
+      DEDUP_REDIS_URL: redis://redis:6379/0
       WEBHOOK_SVC_ADDR: ":8081"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/healthz"]
@@ -45,7 +51,14 @@ services:
       caddy_net:
         aliases:
           - webhook-svc
+      jira_bot_default:
+        aliases:
+          - webhook-svc
 
 networks:
   caddy_net:
+    external: true
+  # Где живут jira_bot-nats-1, jira_bot-redis-1, jira_bot-*-svc-1.
+  # Имя — `<project>_default`, проект `jira_bot` от базового docker-compose.yml.
+  jira_bot_default:
     external: true

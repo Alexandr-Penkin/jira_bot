@@ -154,7 +154,7 @@ func main() {
 	jiraClient := jira.NewClient(oauthClient, userRepo, log)
 	jiraClient.SetEventPublisher(eventPub)
 	jiraClient.StartCleanup(ctx)
-	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
+	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, cfg.JiraWebhookURL, log)
 
 	// Phase 2: identity-svc TokenLease. The monolith exposes the
 	// protocol on an internal listener so Phase-3 services (webhook-svc,

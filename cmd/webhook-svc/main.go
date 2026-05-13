@@ -177,7 +177,7 @@ func main() {
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
 
-	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, log)
+	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, cfg.JiraWebhookURL, log)
 
 	// webhook-svc delivers notifications via the notifier seam: when
 	// NOTIFY_VIA_EVENTS is on, it publishes NotifyRequested events and a

@@ -76,14 +76,16 @@ type WebhookManager struct {
 	client      *Client
 	userRepo    *storage.UserRepo
 	webhookRepo *storage.WebhookRepo
+	deliveryURL string
 	log         zerolog.Logger
 }
 
-func NewWebhookManager(client *Client, userRepo *storage.UserRepo, webhookRepo *storage.WebhookRepo, log zerolog.Logger) *WebhookManager {
+func NewWebhookManager(client *Client, userRepo *storage.UserRepo, webhookRepo *storage.WebhookRepo, deliveryURL string, log zerolog.Logger) *WebhookManager {
 	return &WebhookManager{
 		client:      client,
 		userRepo:    userRepo,
 		webhookRepo: webhookRepo,
+		deliveryURL: deliveryURL,
 		log:         log,
 	}
 }
@@ -95,6 +97,13 @@ func NewWebhookManager(client *Client, userRepo *storage.UserRepo, webhookRepo *
 // webhook-compatible JQL filter.
 func (m *WebhookManager) RegisterForSubscription(ctx context.Context, sub *storage.Subscription) {
 	if sub == nil {
+		return
+	}
+	if m.deliveryURL == "" {
+		m.log.Warn().
+			Int64("user_id", sub.TelegramUserID).
+			Str("sub_type", sub.SubscriptionType).
+			Msg("webhook delivery URL not configured; skipping registration (set JIRA_WEBHOOK_URL)")
 		return
 	}
 	jql := SanitizeWebhookJQL(SubscriptionWebhookJQL(sub))
@@ -109,7 +118,7 @@ func (m *WebhookManager) RegisterForSubscription(ctx context.Context, sub *stora
 		return
 	}
 
-	webhookID, expiresAt, err := m.client.RegisterWebhook(ctx, user, jql, DefaultWebhookEvents)
+	webhookID, expiresAt, err := m.client.RegisterWebhook(ctx, user, m.deliveryURL, jql, DefaultWebhookEvents)
 	if err != nil {
 		m.log.Warn().
 			Err(err).
@@ -347,10 +356,14 @@ type registerWebhookResponse struct {
 
 // RegisterWebhook registers a single dynamic webhook for the given user
 // with the given JQL filter and event list. Returns the Jira-assigned
-// webhook id and the absolute expiry time. Atlassian sends events to the
-// URL configured in the OAuth app's developer console — the URL is not
-// passed in the request body.
-func (c *Client) RegisterWebhook(ctx context.Context, user *storage.User, jqlFilter string, events []string) (int64, time.Time, error) {
+// webhook id and the absolute expiry time. The deliveryURL is required:
+// Atlassian's dynamic-webhook API expects the receiver URL in the body,
+// and rejects registrations whose host does not match the OAuth app's
+// configured base URL.
+func (c *Client) RegisterWebhook(ctx context.Context, user *storage.User, deliveryURL, jqlFilter string, events []string) (int64, time.Time, error) {
+	if deliveryURL == "" {
+		return 0, time.Time{}, fmt.Errorf("delivery URL is required")
+	}
 	if jqlFilter == "" {
 		return 0, time.Time{}, fmt.Errorf("jql filter is required")
 	}
@@ -359,6 +372,7 @@ func (c *Client) RegisterWebhook(ctx context.Context, user *storage.User, jqlFil
 	}
 
 	payload := registerWebhookRequest{
+		URL: deliveryURL,
 		Webhooks: []webhookSpec{{
 			Events:    events,
 			JqlFilter: jqlFilter,
