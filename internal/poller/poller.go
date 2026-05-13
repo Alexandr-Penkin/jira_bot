@@ -458,7 +458,9 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 	}
 	// Non-mention notification with no recent changes by anyone other than
 	// the current user — also skip (would produce an empty notification).
-	if len(authors) == 0 && len(changes) == 0 {
+	// Mentions legitimately have no changelog entries (a bare comment does
+	// not produce a changelog) so they must not be caught here.
+	if !isMention && len(authors) == 0 && len(changes) == 0 {
 		p.log.Info().
 			Int64("chat_id", chatID).
 			Str("issue", issue.Key).

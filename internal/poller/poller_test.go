@@ -212,3 +212,39 @@ func TestRecentChanges_NilChangelog(t *testing.T) {
 	assert.Nil(t, authors)
 	assert.Nil(t, items)
 }
+
+// A bare comment does not produce a changelog entry, so recentChanges
+// returns (nil, nil) for a mention-only update. addPending must still
+// create a pending notification — otherwise my_mentions never delivers
+// for cold mentions in unrelated issues.
+func TestAddPending_KeepsMentionWithoutChangelog(t *testing.T) {
+	p := &Poller{
+		pending: make(map[string]*pendingNotification),
+	}
+	issue := &jira.Issue{
+		Key:       "FOO-1",
+		Changelog: nil,
+	}
+
+	p.addPending(42, issue, "https://example.atlassian.net", time.Now().Add(-time.Minute).Unix(), "", "en", true)
+
+	if _, ok := p.pending["42:FOO-1"]; !ok {
+		t.Fatalf("mention notification was dropped despite empty changelog; pending map: %v", p.pending)
+	}
+}
+
+// Conversely, a non-mention call with an empty changelog must drop —
+// that is the legitimate "Jira bumped `updated` but nothing changed in
+// the visible window" case.
+func TestAddPending_DropsNonMentionWithoutChangelog(t *testing.T) {
+	p := &Poller{
+		pending: make(map[string]*pendingNotification),
+	}
+	issue := &jira.Issue{Key: "FOO-2"}
+
+	p.addPending(42, issue, "https://example.atlassian.net", time.Now().Add(-time.Minute).Unix(), "", "en", false)
+
+	if _, ok := p.pending["42:FOO-2"]; ok {
+		t.Fatalf("non-mention with no changes should have been dropped")
+	}
+}
