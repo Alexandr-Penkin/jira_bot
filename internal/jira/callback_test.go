@@ -44,10 +44,29 @@ func TestHandleCallback_MissingState(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestHandleCallback_MissingBoth(t *testing.T) {
+func TestHandleCallback_BareGETShowsStatusPage(t *testing.T) {
+	// An operator pasting the callback URL into a browser hits this
+	// path. We render a human-readable status page instead of a 400 so
+	// the diagnostic value is clear at a glance.
 	cs := &CallbackServer{log: zerolog.Nop()}
 
 	req := httptest.NewRequest(http.MethodGet, "/callback", nil)
+	w := httptest.NewRecorder()
+
+	cs.handleCallback(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "Endpoint is up")
+	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+}
+
+func TestHandleCallback_PartialParamsStill400(t *testing.T) {
+	// A real broken callback (Jira sent one of the params but not the
+	// other, or someone is fuzzing) must NOT get the friendly status
+	// page — it must surface as a 400 so it's logged loudly.
+	cs := &CallbackServer{log: zerolog.Nop()}
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?code=abc", nil)
 	w := httptest.NewRecorder()
 
 	cs.handleCallback(w, req)

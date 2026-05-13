@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -130,7 +131,7 @@ func TestCleanExpiredStates(t *testing.T) {
 	}
 	client.mu.Unlock()
 
-	client.cleanExpiredStates()
+	client.cleanExpiredStates(context.Background())
 
 	client.mu.Lock()
 	_, hasExpired := client.states["expired"]

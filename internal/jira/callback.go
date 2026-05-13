@@ -110,6 +110,15 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
+	// A bare GET with no query params is almost certainly an operator
+	// poking the URL by hand to check the endpoint is alive — show a
+	// human-readable status page instead of a confusing 400.
+	if code == "" && state == "" && r.Method == http.MethodGet && r.URL.RawQuery == "" {
+		writeStatusPage(w, "SleepJiraBot — OAuth callback",
+			"This endpoint receives the OAuth 2.0 redirect from Atlassian after a user approves the Sleep Jira Bot. Visit it manually only for diagnostics — the real flow is triggered by the /connect command in Telegram.")
+		return
+	}
+
 	if code == "" || state == "" {
 		http.Error(w, "missing code or state", http.StatusBadRequest)
 		return
@@ -334,4 +343,19 @@ func fetchMyself(ctx context.Context, cloudID, accessToken string) (*JiraUser, e
 		return nil, err
 	}
 	return &user, nil
+}
+
+// writeStatusPage renders a small operator-facing HTML page so a manual
+// browser visit to /callback shows a clear "the endpoint is alive"
+// confirmation instead of a raw 400.
+func writeStatusPage(w http.ResponseWriter, title, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>%s</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#222}
+h1{font-size:1.4rem;margin-bottom:.3rem}p{line-height:1.5;color:#444}.ok{color:#0a7d3b;font-weight:600}</style>
+</head><body><h1>%s</h1><p class="ok">&#x2705; Endpoint is up</p><p>%s</p></body></html>`,
+		title, title, body)
 }

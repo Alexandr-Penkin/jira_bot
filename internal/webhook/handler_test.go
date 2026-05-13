@@ -165,10 +165,28 @@ func signBody(body []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func TestServeHTTP_MethodNotAllowed(t *testing.T) {
+func TestServeHTTP_GETShowsStatusPage(t *testing.T) {
+	// Operators paste the webhook URL into a browser to check it's
+	// reachable; GET now renders a status page with the running event
+	// counter instead of returning 405.
 	h := newTestHandler()
 
 	req := httptest.NewRequest(http.MethodGet, "/webhook/jira", nil)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "Endpoint is up")
+	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+}
+
+func TestServeHTTP_NonPOSTNonGETStill405(t *testing.T) {
+	// Anything that is not a Jira POST or an operator GET — typically a
+	// misconfigured proxy or a scanner — should still be rejected.
+	h := newTestHandler()
+
+	req := httptest.NewRequest(http.MethodPut, "/webhook/jira", nil)
 	w := httptest.NewRecorder()
 
 	h.ServeHTTP(w, req)

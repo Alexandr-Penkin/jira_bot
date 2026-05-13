@@ -11,7 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"errors"
+
 	"github.com/rs/zerolog"
+
+	"SleepJiraBot/internal/storage"
 )
 
 const (
@@ -53,6 +57,12 @@ type OAuthClient struct {
 	log    zerolog.Logger
 	mu     sync.Mutex
 	states map[string]oauthState
+	// stateStore, when set, persists OAuth state tokens in Mongo so
+	// processes that generate the auth URL (telegram-svc /connect) and
+	// the process that handles the callback (cmd/bot) can share state.
+	// In-memory states map remains a fallback for single-process tests
+	// and dev runs without a configured store.
+	stateStore *storage.OAuthStateRepo
 }
 
 func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
@@ -78,6 +88,16 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 	}
 }
 
+// SetStateStore installs a Mongo-backed state repository. Once set,
+// GenerateAuthURL persists state there and ValidateState reads from it,
+// so multiple processes can hand off the OAuth handshake to each other.
+// The in-memory map is kept as a fallback if the store is unreachable
+// at consume time (e.g. transient Mongo error) — but the canonical
+// source is the store when configured.
+func (o *OAuthClient) SetStateStore(store *storage.OAuthStateRepo) {
+	o.stateStore = store
+}
+
 // StartCleanup starts a background goroutine that removes expired OAuth states.
 // It stops when the context is cancelled.
 func (o *OAuthClient) StartCleanup(ctx context.Context) {
@@ -89,31 +109,52 @@ func (o *OAuthClient) StartCleanup(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				o.cleanExpiredStates()
+				o.cleanExpiredStates(ctx)
 			}
 		}
 	}()
 }
 
-func (o *OAuthClient) cleanExpiredStates() {
+func (o *OAuthClient) cleanExpiredStates(ctx context.Context) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
-
 	now := time.Now()
 	for state, entry := range o.states {
 		if now.Sub(entry.createdAt) > stateMaxAge {
 			delete(o.states, state)
 		}
 	}
+	o.mu.Unlock()
+
+	if o.stateStore != nil {
+		// Best-effort sweep — a TTL index on the collection prunes
+		// these regardless, but doing it here keeps the window tight.
+		if err := o.stateStore.DeleteExpired(ctx, now.Add(-stateMaxAge)); err != nil {
+			o.log.Debug().Err(err).Msg("oauth: failed to sweep expired states from store")
+		}
+	}
 }
 
 func (o *OAuthClient) GenerateAuthURL(state string, telegramUserID int64) string {
+	now := time.Now()
+
 	o.mu.Lock()
 	o.states[state] = oauthState{
 		telegramUserID: telegramUserID,
-		createdAt:      time.Now(),
+		createdAt:      now,
 	}
 	o.mu.Unlock()
+
+	if o.stateStore != nil {
+		// Tight timeout so a Mongo hiccup does not stall /connect — the
+		// in-memory map already has the state for same-process callbacks.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := o.stateStore.Save(ctx, state, telegramUserID, now); err != nil {
+			o.log.Error().Err(err).
+				Int64("telegram_user_id", telegramUserID).
+				Msg("oauth: failed to persist state; cross-process callback will fail")
+		}
+	}
 
 	params := url.Values{
 		"audience":      {"api.atlassian.com"},
@@ -130,21 +171,46 @@ func (o *OAuthClient) GenerateAuthURL(state string, telegramUserID int64) string
 
 func (o *OAuthClient) ValidateState(state string) (int64, bool) {
 	o.mu.Lock()
-	entry, ok := o.states[state]
-	if ok {
+	entry, hasLocal := o.states[state]
+	if hasLocal {
 		delete(o.states, state)
 	}
 	o.mu.Unlock()
 
-	if !ok {
+	if hasLocal {
+		if time.Since(entry.createdAt) > stateMaxAge {
+			return 0, false
+		}
+		// Also drop the persisted copy so a duplicate replay can't
+		// consume it later.
+		if o.stateStore != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if _, err := o.stateStore.Consume(ctx, state); err != nil && !errors.Is(err, storage.ErrOAuthStateNotFound) {
+				o.log.Debug().Err(err).Msg("oauth: failed to drop persisted state after local hit")
+			}
+		}
+		return entry.telegramUserID, true
+	}
+
+	if o.stateStore == nil {
 		return 0, false
 	}
 
-	if time.Since(entry.createdAt) > stateMaxAge {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	doc, err := o.stateStore.Consume(ctx, state)
+	if err != nil {
+		if !errors.Is(err, storage.ErrOAuthStateNotFound) {
+			o.log.Error().Err(err).Msg("oauth: failed to consume state from store")
+		}
 		return 0, false
 	}
 
-	return entry.telegramUserID, true
+	if time.Since(doc.CreatedAt) > stateMaxAge {
+		return 0, false
+	}
+	return doc.TelegramUserID, true
 }
 
 func (o *OAuthClient) ExchangeCode(ctx context.Context, code string) (*TokenResponse, error) {

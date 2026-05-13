@@ -107,6 +107,10 @@ func main() {
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
 	templateRepo := storage.NewTemplateRepo(mongo.Database())
+	oauthStateRepo := storage.NewOAuthStateRepo(mongo.Database())
+	if err := oauthStateRepo.EnsureIndexes(ctx); err != nil {
+		log.Warn().Err(err).Msg("failed to ensure oauth_states TTL index; continuing")
+	}
 
 	// Phase 0 of the DDD microservices split: publish domain events to a
 	// NATS JetStream cluster alongside every primary write path. Gated by
@@ -150,6 +154,7 @@ func main() {
 		RedirectURI:  cfg.JiraRedirectURI,
 	}
 	oauthClient := jira.NewOAuthClient(oauthCfg, log)
+	oauthClient.SetStateStore(oauthStateRepo)
 	oauthClient.StartCleanup(ctx)
 	jiraClient := jira.NewClient(oauthClient, userRepo, log)
 	jiraClient.SetEventPublisher(eventPub)

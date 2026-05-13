@@ -370,6 +370,10 @@ func startUpdateHandler(
 	scheduleRepo := storage.NewScheduleRepo(mongoClient.Database())
 	webhookRepo := storage.NewWebhookRepo(mongoClient.Database())
 	templateRepo := storage.NewTemplateRepo(mongoClient.Database())
+	oauthStateRepo := storage.NewOAuthStateRepo(mongoClient.Database())
+	if err := oauthStateRepo.EnsureIndexes(ctx); err != nil {
+		log.Warn().Err(err).Msg("telegram-svc: failed to ensure oauth_states TTL index; continuing")
+	}
 
 	subRepo.SetEventPublisher(eventPub)
 	userRepo.SetEventPublisher(eventPub)
@@ -381,6 +385,7 @@ func startUpdateHandler(
 		RedirectURI:  cfg.JiraRedirectURI,
 	}
 	oauthClient := jira.NewOAuthClient(oauthCfg, log)
+	oauthClient.SetStateStore(oauthStateRepo)
 	oauthClient.StartCleanup(ctx)
 	jiraClient := jira.NewClient(oauthClient, userRepo, log)
 	jiraClient.SetEventPublisher(eventPub)

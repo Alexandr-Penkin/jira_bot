@@ -53,6 +53,27 @@ func (h *Handler) EventsReceived() int64 {
 	return h.eventsReceived.Load()
 }
 
+// writeStatusPage renders an operator-facing HTML page on GET /webhook
+// so a manual browser visit shows a clear "the endpoint is up" message
+// instead of a confusing 405. Also surfaces the running event counter
+// so the operator can tell at a glance whether Jira is actually posting.
+func (h *Handler) writeStatusPage(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>SleepJiraBot &mdash; Webhook ingress</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#222}
+h1{font-size:1.4rem;margin-bottom:.3rem}p{line-height:1.5;color:#444}.ok{color:#0a7d3b;font-weight:600}
+.metric{background:#f4f4f6;border-radius:8px;padding:12px 16px;margin-top:16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>
+</head><body><h1>SleepJiraBot &mdash; Webhook ingress</h1>
+<p class="ok">&#x2705; Endpoint is up</p>
+<p>This URL receives <code>POST</code> events from Jira Cloud (dynamic webhooks registered through <code>/rest/api/3/webhook</code>). Manual <code>GET</code> just renders this status page.</p>
+<div class="metric">events received since process start: <strong>%d</strong></div>
+</body></html>`,
+		h.eventsReceived.Load())
+}
+
 func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, n notifier.Notifier, webhookSecret string, log zerolog.Logger, dedup notifydedup.Allower) *Handler {
 	h := &Handler{
 		subRepo:       subRepo,
@@ -125,6 +146,14 @@ func (h *Handler) drainQueue() {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Manual GET (e.g. operator opening the URL in a browser) — render a
+	// status page with the event counter so it's obvious the endpoint is
+	// alive and how many events Jira has actually delivered so far.
+	if r.Method == http.MethodGet {
+		h.writeStatusPage(w)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
