@@ -77,11 +77,12 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 			"read:webhook:jira",
 			"write:webhook:jira",
 			"delete:webhook:jira",
-			// Required by POST /rest/api/3/webhook to validate the
-			// jqlFilter in the registration payload. Without it Jira
-			// returns 401 "scope does not match" even though the other
-			// webhook scopes are present.
+			// Required by POST /rest/api/3/webhook to read and validate
+			// the jqlFilter in the registration payload. Without these
+			// Jira returns 401 "scope does not match" even though the
+			// webhook scopes themselves are granted.
 			"read:jql:jira",
+			"validate:jql:jira",
 			"offline_access",
 		}
 	}
