@@ -67,22 +67,44 @@ type OAuthClient struct {
 
 func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 	if len(cfg.Scopes) == 0 {
+		// Pure granular scope set. Mixing classic (read:jira-work,
+		// write:jira-work, read:jira-user) with granular causes Atlassian
+		// to put the token into a hybrid mode where endpoint scope checks
+		// reject otherwise-valid requests with 401 "scope does not match"
+		// — specifically POST /rest/api/3/webhook. Keep this list granular
+		// only and remove the classic scopes from the OAuth app in the
+		// Atlassian Developer Console.
 		cfg.Scopes = []string{
-			"read:jira-work",
-			"write:jira-work",
-			"read:jira-user",
-			"read:sprint:jira-software",
-			"read:board-scope:jira-software",
+			// Issues + sub-resources
+			"read:issue:jira",
+			"write:issue:jira",
+			"read:issue-meta:jira",
+			"read:comment:jira",
+			"write:comment:jira",
+
+			// Field, project, filter metadata
+			"read:field:jira",
 			"read:project:jira",
+			"read:filter:jira",
+
+			// Users
+			"read:user:jira",
+
+			// JQL — required by POST /webhook for filter validation
+			"read:jql:jira",
+			"validate:jql:jira",
+
+			// Agile (boards, sprints, jira-software issue view)
+			"read:board-scope:jira-software",
+			"read:sprint:jira-software",
+			"read:issue:jira-software",
+
+			// Dynamic webhooks
 			"read:webhook:jira",
 			"write:webhook:jira",
 			"delete:webhook:jira",
-			// Required by POST /rest/api/3/webhook to read and validate
-			// the jqlFilter in the registration payload. Without these
-			// Jira returns 401 "scope does not match" even though the
-			// webhook scopes themselves are granted.
-			"read:jql:jira",
-			"validate:jql:jira",
+
+			// Refresh token
 			"offline_access",
 		}
 	}
