@@ -43,27 +43,21 @@ func (h *Handler) handleConnect(ctx context.Context, chatID, userID int64) tgbot
 func (h *Handler) handleDisconnect(ctx context.Context, chatID, userID int64) tgbotapi.MessageConfig {
 	lang := h.getLang(ctx, userID)
 
-	existing, err := h.userRepo.GetByTelegramID(ctx, userID)
-	if err != nil {
-		h.log.Error().Err(err).Msg("failed to check user")
-		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic"))
-	}
-
-	if existing == nil || existing.AccessToken == "" {
-		return tgbotapi.NewMessage(chatID, locale.T(lang, "disconnect.not_linked"))
-	}
-
-	// Delete Jira-side webhooks BEFORE wiping the user record, since
-	// the manager needs the access token to call the Jira API.
+	// Idempotent: run every cleanup step regardless of whether the user
+	// currently has Jira credentials. Lets a stuck user (residual
+	// subscriptions/schedules/webhook rows from a previous half-broken
+	// disconnect) re-run /disconnect to converge on a clean state.
+	// DeleteAllForUser skips the Jira API call when no access token is
+	// present, so it remains safe to invoke.
 	if h.webhookMgr != nil {
 		h.webhookMgr.DeleteAllForUser(ctx, userID)
 	}
 
-	if err = h.subRepo.DeleteByUserID(ctx, userID); err != nil {
+	if err := h.subRepo.DeleteByUserID(ctx, userID); err != nil {
 		h.log.Error().Err(err).Int64("user_id", userID).Msg("failed to delete user subscriptions")
 	}
 
-	if err = h.scheduleRepo.DeleteByUserID(ctx, userID); err != nil {
+	if err := h.scheduleRepo.DeleteByUserID(ctx, userID); err != nil {
 		h.log.Error().Err(err).Int64("user_id", userID).Msg("failed to delete user schedules")
 	}
 
@@ -75,7 +69,7 @@ func (h *Handler) handleDisconnect(ctx context.Context, chatID, userID int64) tg
 	// project/board, sprint issue types, assignee/story points field
 	// ids, and daily JQLs so reconnecting does not force the user to
 	// reconfigure everything.
-	if err = h.userRepo.ClearJiraCredentials(ctx, userID); err != nil {
+	if err := h.userRepo.ClearJiraCredentials(ctx, userID); err != nil {
 		h.log.Error().Err(err).Msg("failed to clear jira credentials")
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "disconnect.failed"))
 	}
