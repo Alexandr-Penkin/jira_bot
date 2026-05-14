@@ -4,6 +4,12 @@
 COMPOSE_PROFILES := webhook-svc identity-svc subscription-svc scheduler-svc preferences-svc telegram-svc redis
 COMPOSE_PROFILE_FLAGS := $(foreach p,$(COMPOSE_PROFILES),--profile $(p))
 COMPOSE := docker compose $(COMPOSE_PROFILE_FLAGS)
+# docker-compose.prod.yml only redeclares bot and webhook-svc with the
+# caddy_net alias. Every other service (telegram-svc, identity-svc, etc.)
+# lives in docker-compose.yml behind profiles. Both files target the same
+# Compose project (= directory name) so containers share one fleet — but
+# rebuilding the full set takes two invocations: $(COMPOSE) for the base
+# + profiles, then $(COMPOSE_PROD) for the overlay.
 COMPOSE_PROD := docker compose -f docker-compose.prod.yml
 
 .PHONY: run build \
@@ -12,7 +18,7 @@ COMPOSE_PROD := docker compose -f docker-compose.prod.yml
         restart restart-all restart-bot restart-webhook-svc restart-identity-svc \
         restart-subscription-svc restart-scheduler-svc restart-preferences-svc \
         restart-telegram-svc restart-redis restart-nats \
-        release release-all prod-restart prod-release
+        release release-all prod-restart prod-release deploy
 
 run:
 	go run ./cmd/bot
@@ -94,5 +100,22 @@ release-all:
 prod-restart:
 	$(COMPOSE_PROD) restart
 
+# `prod-release` rebuilds the whole prod fleet:
+#   1. base compose with every profile enabled → telegram-svc,
+#      identity-svc, subscription-svc, scheduler-svc, preferences-svc,
+#      webhook-svc, redis (containers named jira_bot-<svc>-1).
+#   2. prod overlay, restricted to `bot` only → adds caddy_net for the
+#      Caddy reverse proxy. webhook-svc in the overlay is intentionally
+#      skipped because the base compose already owns its container; the
+#      overlay's container_name would otherwise create a duplicate.
 prod-release:
-	$(COMPOSE_PROD) up -d --build
+	$(COMPOSE) up -d --build
+	$(COMPOSE_PROD) up -d --build bot
+
+# `deploy` is the one-shot server-side redeploy: pull latest code,
+# rebuild every service, then print fleet status.
+deploy:
+	git pull --ff-only
+	$(COMPOSE) up -d --build --remove-orphans
+	$(COMPOSE_PROD) up -d --build bot
+	docker ps --format 'table {{.Names}}\t{{.Status}}'
