@@ -19,25 +19,32 @@ import (
 // SubscriptionWebhookJQL maps an internal subscription record to a JQL
 // filter that Jira will accept for dynamic webhook registration.
 //
-// Jira's webhook JQL only supports a limited subset of standard JQL: no
-// custom fields, no ORDER BY, and only the user-relation clauses
-// (assignee, reporter, creator, watcher, voter). currentUser() works
-// because the webhook is owned by the OAuth user.
+// Jira's webhook JQL parser is a strict subset of standard JQL: no
+// custom fields, no ORDER BY, and only a handful of clauses —
+// assignee, reporter, creator, project, issuekey. The watcher/voter
+// clauses (once supported) are no longer accepted and trigger a
+// "Clause X is unsupported" rejection at registration time.
+// currentUser() works because the webhook is owned by the OAuth user.
 //
 // Returns "" when there is nothing to register (e.g. raw filter
 // subscriptions whose JQL we cannot guarantee to be webhook-compatible).
+// In that case the poller picks up the slack.
 func SubscriptionWebhookJQL(sub *storage.Subscription) string {
 	switch sub.SubscriptionType {
 	case storage.SubTypeMyNewIssues:
 		return "assignee = currentUser()"
 	case storage.SubTypeMyWatched:
-		return "watcher = currentUser()"
+		// Jira webhook JQL no longer accepts `watcher`. There is no
+		// safe substitute that captures "issues I watch" — let the
+		// poller handle this subscription type.
+		return ""
 	case storage.SubTypeMyMentions:
 		// Jira webhook JQL has no "mentioned me" clause. We register
-		// the broadest user-relation filter and let the webhook
-		// handler parse comment ADF for actual mentions. Pure cold
-		// mentions in unrelated projects still cannot be caught.
-		return "(watcher = currentUser() OR assignee = currentUser() OR reporter = currentUser() OR voter = currentUser())"
+		// the broadest still-supported user-relation filter and let
+		// the webhook handler parse comment ADF for actual mentions.
+		// Pure cold mentions in unrelated projects still cannot be
+		// caught.
+		return "(assignee = currentUser() OR reporter = currentUser())"
 	case storage.SubTypeProjectUpdates:
 		if sub.JiraProjectKey == "" {
 			return ""
