@@ -5,7 +5,8 @@ RUN apk add --no-cache ca-certificates
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 
@@ -14,7 +15,9 @@ COPY . .
 # and future phases will add more.
 ARG CMD_PATH=./cmd/bot
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/service ${CMD_PATH}
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /app/service ${CMD_PATH}
 
 FROM alpine:3.21
 
