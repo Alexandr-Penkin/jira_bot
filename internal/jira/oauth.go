@@ -74,23 +74,60 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 		// — specifically POST /rest/api/3/webhook. Keep this list granular
 		// only and remove the classic scopes from the OAuth app in the
 		// Atlassian Developer Console.
+		// Pure granular scope set. Each Jira REST endpoint in
+		// internal/jira/client.go requires its own granular scope list,
+		// and the union is large. Missing a scope manifests as a 401
+		// "scope does not match", not a 403, so this list is exhaustive
+		// for the endpoints the bot calls today (/myself, /search/jql,
+		// /issue/{key}*, /project/{key}*, /filter/*, /user/search,
+		// /field, /webhook, agile /board+/sprint).
 		cfg.Scopes = []string{
-			// Issues + sub-resources
+			// Issues — read
 			"read:issue:jira",
-			"write:issue:jira",
 			"read:issue-meta:jira",
+			"read:issue-details:jira",
+			"read:issue.changelog:jira",
+			"read:issue-link:jira",
+			"read:issue-worklog:jira",
+			"read:issue.vote:jira",
+			"read:issue-type:jira",
+			"read:issue.transition:jira",
+			"read:issue-status:jira",
+
+			// Issues — write
+			"write:issue:jira",
+
+			// Comments
 			"read:comment:jira",
 			"write:comment:jira",
 
-			// Field, project, filter metadata
+			// Fields
 			"read:field:jira",
+			"read:field-configuration:jira",
+			"read:field.default-value:jira",
+
+			// Projects
 			"read:project:jira",
+			"read:project-category:jira",
+			"read:project-version:jira",
+			"read:project.component:jira",
+			"read:project-role:jira",
+
+			// Workflows / statuses
+			"read:status:jira",
+			"read:workflow:jira",
+			"read:workflow-scheme:jira",
+
+			// Filters
 			"read:filter:jira",
 
-			// Users
+			// Users / org
 			"read:user:jira",
+			"read:application-role:jira",
+			"read:avatar:jira",
+			"read:group:jira",
 
-			// JQL — required by POST /webhook for filter validation
+			// JQL — required by /search/jql and POST /webhook
 			"read:jql:jira",
 			"validate:jql:jira",
 
