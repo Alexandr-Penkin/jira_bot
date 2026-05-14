@@ -139,6 +139,15 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Atlassian silently drops scopes that aren't enabled for the OAuth
+	// app in the developer console — surface the actually-granted set so
+	// missing-scope failures (e.g. "scope does not match" on /webhook)
+	// can be diagnosed by reading the callback log.
+	cs.log.Info().
+		Int64("telegram_user_id", telegramUserID).
+		Str("granted_scopes", tokenResp.Scope).
+		Msg("oauth: token exchange successful")
+
 	resources, err := cs.oauth.GetAccessibleResources(ctx, tokenResp.AccessToken)
 	if err != nil {
 		cs.log.Error().Err(err).Msg("failed to get accessible resources")
