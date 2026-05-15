@@ -120,6 +120,14 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 
 			// Filters
 			"read:filter:jira",
+			"read:filter.column:jira",
+
+			// Issue sub-resources sometimes pulled in by /search/jql
+			// response shaping; missing them yields the misleading
+			// 401 "scope does not match" instead of a 403.
+			"read:issue.property:jira",
+			"read:issue.watcher:jira",
+			"read:notification-scheme:jira",
 
 			// Users / org
 			"read:user:jira",
