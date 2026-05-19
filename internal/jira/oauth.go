@@ -96,15 +96,24 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 
 			// Issues — write
 			"write:issue:jira",
+			"write:issue.property:jira",
+			"read:issue-security-level:jira",
 
 			// Comments
 			"read:comment:jira",
 			"write:comment:jira",
+			"read:comment.property:jira",
+			"write:comment.property:jira",
+
+			// Attachments
+			"read:attachment:jira",
+			"write:attachment:jira",
 
 			// Fields
 			"read:field:jira",
 			"read:field-configuration:jira",
 			"read:field.default-value:jira",
+			"read:field.option:jira",
 
 			// Projects
 			"read:project:jira",
@@ -112,6 +121,7 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 			"read:project-version:jira",
 			"read:project.component:jira",
 			"read:project-role:jira",
+			"read:project.property:jira",
 
 			// Workflows / statuses
 			"read:status:jira",
@@ -129,8 +139,12 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 			"read:issue.watcher:jira",
 			"read:notification-scheme:jira",
 
+			// Priorities
+			"read:priority:jira",
+
 			// Users / org
 			"read:user:jira",
+			"read:user.property:jira",
 			"read:application-role:jira",
 			"read:avatar:jira",
 			"read:group:jira",
@@ -139,15 +153,18 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 			"read:jql:jira",
 			"validate:jql:jira",
 
-			// /search/jql (new replacement for the deprecated /search) has
-			// a non-obvious requirement on read:audit-log:jira — Atlassian
-			// documents it in the granular-scope list for the endpoint even
-			// though the name suggests admin-only audit access. Missing it
-			// surfaces as 401 "scope does not match" with no clue that this
-			// specific scope is the cause. Tracked via the community thread
-			// "Jira Cloud OAuth 2.0 — JQL API works but granular scopes not
-			// reflected" (Sep 2025).
+			// Non-obvious granular scopes that Atlassian documents in the
+			// embedded API spec but hides behind "(Show more)" on the public
+			// reference page. Each one was confirmed by parsing the OpenAPI
+			// JSON embedded in developer.atlassian.com:
+			//   - read:audit-log:jira: GET /search/jql (the new endpoint
+			//     replacing the deprecated /search) — undocumented in most
+			//     guides; missing it returns 401 "scope does not match" with
+			//     no hint that audit-log is the cause.
+			//   - read:issue-type-hierarchy:jira: GET /filter/my,
+			//     /filter/favourite, /project/{key} — same 401 pattern.
 			"read:audit-log:jira",
+			"read:issue-type-hierarchy:jira",
 
 			// Agile (boards, sprints, jira-software issue view)
 			"read:board-scope:jira-software",
