@@ -145,13 +145,18 @@ func (h *Handler) handleDiagnose(ctx context.Context, chatID, adminID int64, arg
 		return err
 	})
 
+	filterOK := h.diagnoseProbe(ctx, &sb, lang, "GET /filter/my", func() error {
+		_, err := h.jiraAPI.GetMyFilters(ctx, user)
+		return err
+	})
+
 	sb.WriteString("\n")
 	switch {
 	case len(hybridMarkers) > 0:
 		sb.WriteString(locale.T(lang, "admin.diagnose.advice_hybrid"))
 	case len(missing) > 0 || user.GrantedScopes == "":
 		sb.WriteString(locale.T(lang, "admin.diagnose.advice_reconnect"))
-	case !myselfOK || !jqlOK:
+	case !myselfOK || !jqlOK || !filterOK:
 		sb.WriteString(locale.T(lang, "admin.diagnose.advice_console"))
 	default:
 		sb.WriteString(locale.T(lang, "admin.diagnose.advice_ok"))
