@@ -139,6 +139,16 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 			"read:jql:jira",
 			"validate:jql:jira",
 
+			// /search/jql (new replacement for the deprecated /search) has
+			// a non-obvious requirement on read:audit-log:jira — Atlassian
+			// documents it in the granular-scope list for the endpoint even
+			// though the name suggests admin-only audit access. Missing it
+			// surfaces as 401 "scope does not match" with no clue that this
+			// specific scope is the cause. Tracked via the community thread
+			// "Jira Cloud OAuth 2.0 — JQL API works but granular scopes not
+			// reflected" (Sep 2025).
+			"read:audit-log:jira",
+
 			// Agile (boards, sprints, jira-software issue view)
 			"read:board-scope:jira-software",
 			"read:sprint:jira-software",
