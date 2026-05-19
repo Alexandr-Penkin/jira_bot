@@ -16,7 +16,23 @@ import (
 const (
 	diagnoseProbeBodyLen = 200
 	diagnoseMaxMissing   = 20
+	diagnoseMaxGranted   = 60
 )
+
+// diagnoseClassicScopes are the legacy "classic" Jira OAuth scopes. Their
+// presence in a granted-scope string means the token was issued in hybrid
+// mode — even one of these flips Atlassian into a state where granular
+// endpoint scope checks fail with 401 "scope does not match" on /search/jql
+// and similar, despite the granular set being fully granted.
+var diagnoseClassicScopes = []string{
+	"read:jira-work",
+	"write:jira-work",
+	"read:jira-user",
+	"manage:jira-project",
+	"manage:jira-configuration",
+	"manage:jira-webhook",
+	"manage:jira-data-provider",
+}
 
 // handleDiagnose runs an admin-only diagnostic on a Jira connection. With no
 // args, diagnoses the admin's own user. With a Telegram user ID arg, looks up
@@ -79,6 +95,8 @@ func (h *Handler) handleDiagnose(ctx context.Context, chatID, adminID int64, arg
 		grantedCount = len(strings.Fields(user.GrantedScopes))
 	}
 
+	hybridMarkers := diagnoseHybridMarkers(user.GrantedScopes)
+
 	sb.WriteString("\n")
 	if user.GrantedScopes == "" {
 		sb.WriteString(locale.T(lang, "admin.diagnose.scopes_unknown"))
@@ -86,6 +104,12 @@ func (h *Handler) handleDiagnose(ctx context.Context, chatID, adminID int64, arg
 	} else {
 		sb.WriteString(locale.T(lang, "admin.diagnose.scopes_summary", grantedCount, len(required)))
 		sb.WriteString("\n")
+
+		if len(hybridMarkers) > 0 {
+			sb.WriteString(locale.T(lang, "admin.diagnose.scopes_hybrid", strings.Join(hybridMarkers, ", ")))
+			sb.WriteString("\n")
+		}
+
 		if len(missing) == 0 {
 			sb.WriteString(locale.T(lang, "admin.diagnose.scopes_ok"))
 			sb.WriteString("\n")
@@ -97,6 +121,14 @@ func (h *Handler) handleDiagnose(ctx context.Context, chatID, adminID int64, arg
 			sb.WriteString(locale.T(lang, "admin.diagnose.scopes_missing", len(missing), strings.Join(shown, "\n")))
 			sb.WriteString("\n")
 		}
+
+		grantedList := strings.Fields(user.GrantedScopes)
+		grantedTrimmed := grantedList
+		if len(grantedTrimmed) > diagnoseMaxGranted {
+			grantedTrimmed = grantedTrimmed[:diagnoseMaxGranted]
+		}
+		sb.WriteString(locale.T(lang, "admin.diagnose.scopes_list", strings.Join(grantedTrimmed, "\n")))
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n")
@@ -115,6 +147,8 @@ func (h *Handler) handleDiagnose(ctx context.Context, chatID, adminID int64, arg
 
 	sb.WriteString("\n")
 	switch {
+	case len(hybridMarkers) > 0:
+		sb.WriteString(locale.T(lang, "admin.diagnose.advice_hybrid"))
 	case len(missing) > 0 || user.GrantedScopes == "":
 		sb.WriteString(locale.T(lang, "admin.diagnose.advice_reconnect"))
 	case !myselfOK || !jqlOK:
@@ -152,6 +186,28 @@ func (h *Handler) diagnoseProbe(_ context.Context, sb *strings.Builder, lang loc
 	sb.WriteString(locale.T(lang, "admin.diagnose.probe_error", label, format.EscapeMarkdown(err.Error())))
 	sb.WriteString("\n")
 	return false
+}
+
+// diagnoseHybridMarkers returns any classic Jira OAuth scopes found in the
+// granted-scope string. A non-empty result means the user's *current* token
+// was issued in hybrid mode, regardless of what the Developer Console looks
+// like right now — the token only picks up console changes when it is
+// re-minted via /disconnect + /connect.
+func diagnoseHybridMarkers(granted string) []string {
+	if granted == "" {
+		return nil
+	}
+	have := make(map[string]struct{}, 32)
+	for _, s := range strings.Fields(granted) {
+		have[s] = struct{}{}
+	}
+	var found []string
+	for _, s := range diagnoseClassicScopes {
+		if _, ok := have[s]; ok {
+			found = append(found, s)
+		}
+	}
+	return found
 }
 
 // diagnoseMissingScopes returns scopes present in required but absent from

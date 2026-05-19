@@ -34,3 +34,23 @@ func TestDiagnoseMissingScopes(t *testing.T) {
 		assert.Empty(t, missing)
 	})
 }
+
+func TestDiagnoseHybridMarkers(t *testing.T) {
+	t.Run("empty granted", func(t *testing.T) {
+		assert.Nil(t, diagnoseHybridMarkers(""))
+	})
+
+	t.Run("pure granular", func(t *testing.T) {
+		assert.Nil(t, diagnoseHybridMarkers("read:jql:jira read:issue:jira offline_access"))
+	})
+
+	t.Run("classic read mixed in", func(t *testing.T) {
+		got := diagnoseHybridMarkers("read:jql:jira read:jira-work offline_access")
+		assert.Equal(t, []string{"read:jira-work"}, got)
+	})
+
+	t.Run("multiple classics", func(t *testing.T) {
+		got := diagnoseHybridMarkers("read:jira-work write:jira-work read:jira-user read:jql:jira")
+		assert.Equal(t, []string{"read:jira-work", "write:jira-work", "read:jira-user"}, got)
+	})
+}
