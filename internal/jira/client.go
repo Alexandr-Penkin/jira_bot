@@ -844,6 +844,12 @@ func (c *Client) ensureValidToken(ctx context.Context, user *storage.User) (acce
 		return "", "", fmt.Errorf("save refreshed tokens: %w", err)
 	}
 
+	if tokenResp.Scope != "" {
+		if scopeErr := c.userRepo.UpdateGrantedScopes(ctx, user.TelegramUserID, tokenResp.Scope); scopeErr != nil {
+			c.log.Warn().Err(scopeErr).Int64("telegram_user_id", user.TelegramUserID).Msg("failed to update granted scopes after refresh")
+		}
+	}
+
 	if pubErr := c.pub.Publish(ctx, eventsv1.TokensRefreshed{
 		TelegramID:  user.TelegramUserID,
 		RefreshedAt: time.Now().Unix(),

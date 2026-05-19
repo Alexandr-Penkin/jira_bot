@@ -20,10 +20,18 @@ func TestNewOAuthClient_DefaultScopes(t *testing.T) {
 		RedirectURI:  "http://localhost/callback",
 	}, zerolog.Nop())
 
-	assert.Len(t, client.cfg.Scopes, 10)
-	assert.Contains(t, client.cfg.Scopes, "read:jira-work")
-	assert.Contains(t, client.cfg.Scopes, "write:jira-work")
-	assert.Contains(t, client.cfg.Scopes, "read:jira-user")
+	// Granular-only scope set — mixing classic (read:jira-work, write:jira-work,
+	// read:jira-user) with granular puts the token in hybrid mode and breaks
+	// endpoint scope checks with 401 "scope does not match". The full list
+	// lives in oauth.go; the assertions here are spot-checks for the endpoints
+	// the bot actually calls.
+	assert.NotEmpty(t, client.cfg.Scopes)
+	assert.NotContains(t, client.cfg.Scopes, "read:jira-work")
+	assert.NotContains(t, client.cfg.Scopes, "write:jira-work")
+	assert.NotContains(t, client.cfg.Scopes, "read:jira-user")
+	assert.Contains(t, client.cfg.Scopes, "read:jql:jira")
+	assert.Contains(t, client.cfg.Scopes, "read:issue:jira")
+	assert.Contains(t, client.cfg.Scopes, "read:user:jira")
 	assert.Contains(t, client.cfg.Scopes, "read:sprint:jira-software")
 	assert.Contains(t, client.cfg.Scopes, "read:board-scope:jira-software")
 	assert.Contains(t, client.cfg.Scopes, "read:project:jira")
@@ -31,6 +39,21 @@ func TestNewOAuthClient_DefaultScopes(t *testing.T) {
 	assert.Contains(t, client.cfg.Scopes, "read:webhook:jira")
 	assert.Contains(t, client.cfg.Scopes, "write:webhook:jira")
 	assert.Contains(t, client.cfg.Scopes, "delete:webhook:jira")
+}
+
+func TestOAuthClient_Scopes_ReturnsCopy(t *testing.T) {
+	client := NewOAuthClient(OAuthConfig{
+		ClientID:     "id",
+		ClientSecret: "secret",
+		RedirectURI:  "http://localhost/callback",
+		Scopes:       []string{"a", "b"},
+	}, zerolog.Nop())
+
+	got := client.Scopes()
+	got[0] = "mutated"
+
+	// Internal slice must not be affected by callers mutating the returned copy.
+	assert.Equal(t, "a", client.cfg.Scopes[0])
 }
 
 func TestNewOAuthClient_CustomScopes(t *testing.T) {

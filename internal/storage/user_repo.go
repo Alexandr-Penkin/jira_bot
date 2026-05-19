@@ -15,30 +15,36 @@ import (
 )
 
 type User struct {
-	ID                   bson.ObjectID `bson:"_id,omitempty"`
-	TelegramUserID       int64         `bson:"telegram_user_id"`
-	JiraCloudID          string        `bson:"jira_cloud_id,omitempty"`
-	JiraAccountID        string        `bson:"jira_account_id,omitempty"`
-	JiraDisplayName      string        `bson:"jira_display_name,omitempty"`
-	JiraSiteURL          string        `bson:"jira_site_url,omitempty"`
-	AccessToken          string        `bson:"access_token,omitempty"`
-	RefreshToken         string        `bson:"refresh_token,omitempty"`
-	TokenExpiresAt       time.Time     `bson:"token_expires_at,omitempty"`
-	Language             string        `bson:"language,omitempty"`
-	DefaultProject       string        `bson:"default_project,omitempty"`
-	DefaultBoardID       int           `bson:"default_board_id,omitempty"`
-	DefaultIssueTypeID   string        `bson:"default_issue_type_id,omitempty"`
-	DefaultIssueTypeName string        `bson:"default_issue_type_name,omitempty"`
-	SprintIssueTypes     []string      `bson:"sprint_issue_types,omitempty"`
-	AssigneeFieldID      string        `bson:"assignee_field_id,omitempty"`
-	StoryPointsFieldID   string        `bson:"story_points_field_id,omitempty"`
-	DailyDoneJQL         string        `bson:"daily_done_jql,omitempty"`
-	DailyDoingJQL        string        `bson:"daily_doing_jql,omitempty"`
-	DailyPlanJQL         string        `bson:"daily_plan_jql,omitempty"`
-	DoneStatuses         []string      `bson:"done_statuses,omitempty"`
-	HoldStatuses         []string      `bson:"hold_statuses,omitempty"`
-	CreatedTS            int64         `bson:"created_ts"`
-	ModifiedTS           int64         `bson:"modified_ts"`
+	ID              bson.ObjectID `bson:"_id,omitempty"`
+	TelegramUserID  int64         `bson:"telegram_user_id"`
+	JiraCloudID     string        `bson:"jira_cloud_id,omitempty"`
+	JiraAccountID   string        `bson:"jira_account_id,omitempty"`
+	JiraDisplayName string        `bson:"jira_display_name,omitempty"`
+	JiraSiteURL     string        `bson:"jira_site_url,omitempty"`
+	AccessToken     string        `bson:"access_token,omitempty"`
+	RefreshToken    string        `bson:"refresh_token,omitempty"`
+	TokenExpiresAt  time.Time     `bson:"token_expires_at,omitempty"`
+	// GrantedScopes is the space-separated scope string Atlassian returned
+	// at token issuance. Captured so /diagnose can show the actual grant vs.
+	// the currently-configured required set without having to re-trigger
+	// OAuth. Atlassian binds scopes into the access token at issuance and
+	// refresh preserves them — so a stale value here is itself diagnostic.
+	GrantedScopes        string   `bson:"granted_scopes,omitempty"`
+	Language             string   `bson:"language,omitempty"`
+	DefaultProject       string   `bson:"default_project,omitempty"`
+	DefaultBoardID       int      `bson:"default_board_id,omitempty"`
+	DefaultIssueTypeID   string   `bson:"default_issue_type_id,omitempty"`
+	DefaultIssueTypeName string   `bson:"default_issue_type_name,omitempty"`
+	SprintIssueTypes     []string `bson:"sprint_issue_types,omitempty"`
+	AssigneeFieldID      string   `bson:"assignee_field_id,omitempty"`
+	StoryPointsFieldID   string   `bson:"story_points_field_id,omitempty"`
+	DailyDoneJQL         string   `bson:"daily_done_jql,omitempty"`
+	DailyDoingJQL        string   `bson:"daily_doing_jql,omitempty"`
+	DailyPlanJQL         string   `bson:"daily_plan_jql,omitempty"`
+	DoneStatuses         []string `bson:"done_statuses,omitempty"`
+	HoldStatuses         []string `bson:"hold_statuses,omitempty"`
+	CreatedTS            int64    `bson:"created_ts"`
+	ModifiedTS           int64    `bson:"modified_ts"`
 }
 
 type UserRepo struct {
@@ -102,6 +108,7 @@ func (r *UserRepo) Upsert(ctx context.Context, user *User) error {
 			"access_token":      encAccess,
 			"refresh_token":     encRefresh,
 			"token_expires_at":  user.TokenExpiresAt,
+			"granted_scopes":    user.GrantedScopes,
 			"modified_ts":       now,
 		},
 		"$setOnInsert": bson.M{
@@ -111,6 +118,25 @@ func (r *UserRepo) Upsert(ctx context.Context, user *User) error {
 
 	opts := options.UpdateOne().SetUpsert(true)
 	_, err = r.coll.UpdateOne(ctx, filter, update, opts)
+	return err
+}
+
+// UpdateGrantedScopes records the scope string Atlassian returned with the
+// latest token. Called separately from UpdateTokens because the refresh
+// response sometimes omits the scope field — only overwrite when we have a
+// non-empty value to avoid stomping the connect-time grant with "".
+func (r *UserRepo) UpdateGrantedScopes(ctx context.Context, telegramUserID int64, scopes string) error {
+	if scopes == "" {
+		return nil
+	}
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"granted_scopes": scopes,
+			"modified_ts":    time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
 	return err
 }
 

@@ -280,6 +280,7 @@ func (cs *CallbackServer) finalizeSiteConnection(ctx context.Context, telegramUs
 		AccessToken:     tokenResp.AccessToken,
 		RefreshToken:    tokenResp.RefreshToken,
 		TokenExpiresAt:  cs.oauth.TokenExpiresAt(tokenResp.ExpiresIn),
+		GrantedScopes:   tokenResp.Scope,
 	}
 
 	if err := cs.userRepo.Upsert(ctx, user); err != nil {

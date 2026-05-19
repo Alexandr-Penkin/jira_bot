@@ -161,6 +161,15 @@ func NewOAuthClient(cfg OAuthConfig, log zerolog.Logger) *OAuthClient {
 	}
 }
 
+// Scopes returns a copy of the OAuth scope list this client requests at
+// authorization time. Consumed by the /diagnose admin command to compare
+// against the granted-scope string stored on each user.
+func (o *OAuthClient) Scopes() []string {
+	out := make([]string, len(o.cfg.Scopes))
+	copy(out, o.cfg.Scopes)
+	return out
+}
+
 // SetStateStore installs a Mongo-backed state repository. Once set,
 // GenerateAuthURL persists state there and ValidateState reads from it,
 // so multiple processes can hand off the OAuth handshake to each other.
