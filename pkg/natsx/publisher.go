@@ -125,6 +125,20 @@ func Connect(ctx context.Context, url string, log zerolog.Logger) (*JetStreamPub
 	return p, nil
 }
 
+// Healthy reports whether the underlying NATS connection is currently
+// connected (or in the middle of a backoff retry that the client
+// considers recoverable). Used by health.Probe in *-svc binaries so a
+// detached publisher takes the pod out of readiness rotation.
+func (p *JetStreamPublisher) Healthy() error {
+	if p == nil || p.nc == nil {
+		return errors.New("natsx: publisher not initialised")
+	}
+	if !p.nc.IsConnected() {
+		return errors.New("natsx: not connected to nats")
+	}
+	return nil
+}
+
 // EnsureStreams creates the given streams if they do not exist, or
 // updates subjects/retention when they do. Idempotent across restarts.
 func (p *JetStreamPublisher) EnsureStreams(streams []StreamConfig) error {

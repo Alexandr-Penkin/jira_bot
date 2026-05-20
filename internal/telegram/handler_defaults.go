@@ -41,6 +41,11 @@ func (h *Handler) handleDefaultsProject(ctx context.Context, chatID, userID int6
 		return h.defaultsShowBoards(ctx, chatID, userID, user, projectKey, lang)
 	}
 
+	// Build a name-by-id lookup in state so the callback payload can
+	// carry only the issue-type ID. Putting the name into callback-data
+	// breaks when it contains ':' (e.g. "API: REST"), which used to be
+	// silently truncated by the colon-based parser.
+	stateData := map[string]string{"project": projectKey}
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(issueTypes)+1)
 	count := 0
 	for _, it := range issueTypes {
@@ -50,12 +55,15 @@ func (h *Handler) handleDefaultsProject(ctx context.Context, chatID, userID int6
 		if count >= maxDefaultIssueTypeButtons {
 			break
 		}
-		data := fmt.Sprintf("def_it:%s:%s", it.ID, it.Name)
-		if len(data) > 60 {
+		cb := "def_it:" + it.ID
+		if len(cb) > 60 {
+			// Issue-type IDs are short numeric strings in practice; skip
+			// pathologically long ones rather than slicing mid-token.
 			continue
 		}
+		stateData["name:"+it.ID] = it.Name
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(it.Name, data),
+			tgbotapi.NewInlineKeyboardButtonData(it.Name, cb),
 		))
 		count++
 	}
@@ -63,7 +71,7 @@ func (h *Handler) handleDefaultsProject(ctx context.Context, chatID, userID int6
 		tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.skip"), "def_it:skip"),
 	))
 
-	h.states.Set(userID, "defaults_issue_type", map[string]string{"project": projectKey})
+	h.states.Set(chatID, userID, "defaults_issue_type", stateData)
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "defaults.choose_issue_type", projectKey))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
@@ -95,7 +103,7 @@ func (h *Handler) defaultsShowBoards(ctx context.Context, chatID, userID int64, 
 		return msg
 	}
 
-	h.states.Set(userID, "defaults_board", map[string]string{"project": projectKey})
+	h.states.Set(chatID, userID, "defaults_board", map[string]string{"project": projectKey})
 
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(boards))
 	for _, b := range boards {
@@ -119,7 +127,7 @@ func (h *Handler) handleDefaultsIssueTypeCallback(ctx context.Context, cq *tgbot
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != "defaults_issue_type" {
 		return
 	}
@@ -131,9 +139,15 @@ func (h *Handler) handleDefaultsIssueTypeCallback(ctx context.Context, cq *tgbot
 	switch {
 	case len(parts) >= 2 && parts[1] == "skip":
 		// Keep whatever DefaultIssueType the user already had; just move on.
-	case len(parts) >= 3:
+	case len(parts) >= 2:
 		typeID := parts[1]
-		typeName := parts[2]
+		// Resolve the display name from state-data populated by the
+		// picker — keeps Jira-controlled names with ':' out of the
+		// callback payload, where they would have been truncated.
+		typeName := data["name:"+typeID]
+		if typeName == "" {
+			typeName = typeID
+		}
 		if err := h.prefs.SetDefaultIssueType(ctx, userID, typeID, typeName); err != nil {
 			h.log.Error().Err(err).Msg("failed to save default issue type")
 		} else {
@@ -172,7 +186,7 @@ func (h *Handler) handleDefaultsBoard(ctx context.Context, chatID, userID int64,
 	}
 
 	if boardID == -1 {
-		h.states.Set(userID, "defaults_board", map[string]string{"project": projectKey})
+		h.states.Set(chatID, userID, "defaults_board", map[string]string{"project": projectKey})
 
 		matched := filterBoards(boards, boardHint)
 		rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(matched))
@@ -204,7 +218,7 @@ func (h *Handler) handleDefaultsBoardCallback(ctx context.Context, cq *tgbotapi.
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	// Format: defaults_board:PROJECT:BOARD_ID
 	if len(parts) < 3 {

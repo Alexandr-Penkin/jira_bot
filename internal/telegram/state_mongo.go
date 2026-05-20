@@ -17,6 +17,7 @@ const (
 )
 
 type stateDoc struct {
+	ChatID    int64             `bson:"chat_id"`
 	UserID    int64             `bson:"user_id"`
 	Step      string            `bson:"step"`
 	Data      map[string]string `bson:"data,omitempty"`
@@ -33,7 +34,12 @@ type mongoStateStore struct {
 }
 
 // NewMongoStateStore wires a Mongo-backed FSM store and ensures the
-// TTL index. Callers should call this before NewBot.
+// TTL + uniqueness indexes. Callers should call this before NewBot.
+//
+// Migration: before this change the unique index was on user_id alone,
+// which collapsed group-chat conversations across users. We drop the
+// stale index (best-effort, error swallowed) before creating the new
+// compound one — Mongo refuses CreateOne if a conflicting index exists.
 func NewMongoStateStore(ctx context.Context, db *mongo.Database, log zerolog.Logger) (stateStore, error) {
 	if db == nil {
 		return nil, errors.New("telegram: mongo database required for conversation_states")
@@ -43,9 +49,27 @@ func NewMongoStateStore(ctx context.Context, db *mongo.Database, log zerolog.Log
 	idxCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// Unique index on user_id for upsert-by-user semantics.
+	// Drop the pre-(chat_id,user_id) unique index if it exists. Older
+	// builds named it after the single key (`user_id_1`); newer drivers
+	// occasionally rename. We tolerate "not found" silently because
+	// fresh installs never had it.
+	if err := coll.Indexes().DropOne(idxCtx, "user_id_1"); err != nil {
+		// IndexNotFound is the expected path on fresh installs; only
+		// log unexpected errors so an operator notices real failures.
+		var cmdErr mongo.CommandError
+		if !errors.As(err, &cmdErr) || cmdErr.Code != 27 { // 27 = IndexNotFound
+			log.Debug().Err(err).Msg("telegram: pre-existing user_id_1 index drop returned non-fatal error; continuing")
+		}
+	}
+
+	// Unique compound index on (chat_id, user_id) for upsert-by-pair
+	// semantics. Group chats with several concurrent users keep their
+	// FSMs separate; private chats (chatID==userID) collapse cleanly.
 	if _, err := coll.Indexes().CreateOne(idxCtx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "user_id", Value: 1}},
+		Keys: bson.D{
+			{Key: "chat_id", Value: 1},
+			{Key: "user_id", Value: 1},
+		},
 		Options: options.Index().SetUnique(true),
 	}); err != nil {
 		return nil, err
@@ -66,26 +90,26 @@ func (s *mongoStateStore) StartCleanup(_ context.Context) {
 	// No-op: the TTL index handles expiry on the server side.
 }
 
-func (s *mongoStateStore) Set(userID int64, step string, data map[string]string) {
+func (s *mongoStateStore) Set(chatID, userID int64, step string, data map[string]string) {
 	ctx, cancel := context.WithTimeout(context.Background(), stateMongoOpTimeout)
 	defer cancel()
 
-	doc := stateDoc{UserID: userID, Step: step, Data: data, UpdatedAt: time.Now()}
+	doc := stateDoc{ChatID: chatID, UserID: userID, Step: step, Data: data, UpdatedAt: time.Now()}
 	opts := options.UpdateOne().SetUpsert(true)
-	if _, err := s.coll.UpdateOne(ctx, bson.M{"user_id": userID}, bson.M{"$set": doc}, opts); err != nil {
-		s.log.Warn().Err(err).Int64("user_id", userID).Msg("telegram: mongo state Set failed")
+	if _, err := s.coll.UpdateOne(ctx, bson.M{"chat_id": chatID, "user_id": userID}, bson.M{"$set": doc}, opts); err != nil {
+		s.log.Warn().Err(err).Int64("chat_id", chatID).Int64("user_id", userID).Msg("telegram: mongo state Set failed")
 	}
 }
 
-func (s *mongoStateStore) Get(userID int64) (step string, data map[string]string) {
+func (s *mongoStateStore) Get(chatID, userID int64) (step string, data map[string]string) {
 	ctx, cancel := context.WithTimeout(context.Background(), stateMongoOpTimeout)
 	defer cancel()
 
 	var doc stateDoc
-	err := s.coll.FindOne(ctx, bson.M{"user_id": userID}).Decode(&doc)
+	err := s.coll.FindOne(ctx, bson.M{"chat_id": chatID, "user_id": userID}).Decode(&doc)
 	if err != nil {
 		if !errors.Is(err, mongo.ErrNoDocuments) {
-			s.log.Warn().Err(err).Int64("user_id", userID).Msg("telegram: mongo state Get failed")
+			s.log.Warn().Err(err).Int64("chat_id", chatID).Int64("user_id", userID).Msg("telegram: mongo state Get failed")
 		}
 		return "", nil
 	}
@@ -97,11 +121,11 @@ func (s *mongoStateStore) Get(userID int64) (step string, data map[string]string
 	return doc.Step, doc.Data
 }
 
-func (s *mongoStateStore) Clear(userID int64) {
+func (s *mongoStateStore) Clear(chatID, userID int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), stateMongoOpTimeout)
 	defer cancel()
 
-	if _, err := s.coll.DeleteOne(ctx, bson.M{"user_id": userID}); err != nil {
-		s.log.Warn().Err(err).Int64("user_id", userID).Msg("telegram: mongo state Clear failed")
+	if _, err := s.coll.DeleteOne(ctx, bson.M{"chat_id": chatID, "user_id": userID}); err != nil {
+		s.log.Warn().Err(err).Int64("chat_id", chatID).Int64("user_id", userID).Msg("telegram: mongo state Clear failed")
 	}
 }

@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"os"
@@ -37,6 +36,7 @@ import (
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
@@ -96,12 +96,7 @@ func main() {
 		_ = mongo.Disconnect(disconnectCtx)
 	}()
 
-	encKeyBytes, err := hex.DecodeString(cfg.EncryptionKey)
-	if err != nil {
-		log.Error().Err(err).Msg("ENCRYPTION_KEY must be a valid hex string (64 hex chars = 32 bytes)")
-		return
-	}
-	enc, err := crypto.NewEncryptor(encKeyBytes)
+	enc, err := crypto.NewEncryptorFromHex(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create encryptor")
 		return
@@ -111,6 +106,7 @@ func main() {
 	subRepo := storage.NewSubscriptionRepo(mongo.Database())
 
 	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
+	var natsPub *natsx.JetStreamPublisher
 	if cfg.EnableEventPublish {
 		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
 		if err != nil {
@@ -123,6 +119,7 @@ func main() {
 			return
 		}
 		eventPub = jsPub
+		natsPub = jsPub
 		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
 		defer func() { _ = jsPub.Close() }()
 	}
@@ -205,7 +202,7 @@ func main() {
 
 	healthSrv := &http.Server{
 		Addr:              getEnv("SUBSCRIPTION_SVC_ADDR", ":8082"),
-		Handler:           healthHandler(),
+		Handler:           health.Mux(buildReadinessProbes(mongo, natsPub)...),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -236,13 +233,21 @@ func main() {
 	log.Info().Msg("subscription-svc stopped")
 }
 
-func healthHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	return mux
+// buildReadinessProbes returns the dependency checks /readyz runs.
+// Mongo is always required; NATS is checked only when the service
+// actually has a publisher (EnableEventPublish=false skips it).
+func buildReadinessProbes(mongo *storage.MongoDB, natsPub *natsx.JetStreamPublisher) []health.Probe {
+	probes := []health.Probe{{
+		Name:  "mongo",
+		Check: mongo.Ping,
+	}}
+	if natsPub != nil {
+		probes = append(probes, health.Probe{
+			Name:  "nats",
+			Check: func(_ context.Context) error { return natsPub.Healthy() },
+		})
+	}
+	return probes
 }
 
 func getEnv(key, def string) string {

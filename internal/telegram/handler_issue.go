@@ -186,7 +186,7 @@ func (h *Handler) handleIssueActionCallback(ctx context.Context, cq *tgbotapi.Ca
 
 	switch action {
 	case "comment":
-		h.states.Set(userID, "comment_text", map[string]string{"issue_key": issueKey})
+		h.states.Set(chatID, userID, "comment_text", map[string]string{"issue_key": issueKey})
 		h.sendPrompt(chatID, locale.T(lang, "comment.enter_text", issueKey), lang)
 	case "transition":
 		h.sendMessage(h.handleTransition(ctx, chatID, userID, issueKey))

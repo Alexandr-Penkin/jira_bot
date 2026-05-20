@@ -46,7 +46,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, cq *tgbotapi.Callback
 	case "users":
 		h.handleAdminUsers(ctx, chatID, 0, lang)
 	case "broadcast":
-		h.states.Set(userID, "admin_broadcast", nil)
+		h.states.Set(chatID, userID, "admin_broadcast", nil)
 		h.sendPrompt(chatID, locale.T(lang, "admin.broadcast_enter"), lang)
 	case "poller":
 		h.handleAdminPoller(chatID, lang)

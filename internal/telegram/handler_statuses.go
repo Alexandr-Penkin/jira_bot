@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -47,7 +48,7 @@ func (h *Handler) handleStatusesStart(ctx context.Context, chatID, userID int64,
 		return
 	}
 
-	h.states.Set(userID, kind.statePrefix()+"_project", nil)
+	h.states.Set(chatID, userID, kind.statePrefix()+"_project", nil)
 	h.sendPrompt(chatID, locale.T(lang, kind.localePrefix()+".enter_project"), lang)
 }
 
@@ -88,33 +89,41 @@ func (h *Handler) showStatusPicker(ctx context.Context, chatID, userID int64, pr
 
 	prefix := kind.statePrefix()
 	stateData := map[string]string{"project": projectKey, "kind": string(kind)}
-	for _, s := range statuses {
-		stateData["status:"+s] = "available"
+	// Same shape as handler_issuetypes: index-keyed name table so the
+	// toggle callback carries only the index, not a Jira-controlled
+	// status name that may contain ':'.
+	stateData["nm_count"] = strconv.Itoa(len(statuses))
+	for i, s := range statuses {
+		stateData["nm:"+strconv.Itoa(i)] = s
 		if selected[strings.ToLower(s)] == "1" {
 			stateData["sel:"+s] = "1"
 		}
 	}
-	h.states.Set(userID, prefix+"_select", stateData)
+	h.states.Set(chatID, userID, prefix+"_select", stateData)
 
 	h.sendStatusPickerMessage(chatID, lang, stateData, kind)
 }
 
 // buildStatusKeyboard builds the inline keyboard for status selection.
+// Toggle buttons carry the index into nm:<i>; the handler resolves the
+// status name from state-data, which is safe regardless of ':' inside
+// the name.
 func buildStatusKeyboard(lang locale.Lang, stateData map[string]string, kind statusKind) tgbotapi.InlineKeyboardMarkup {
 	prefix := kind.statePrefix()
 	var rows [][]tgbotapi.InlineKeyboardButton
 
-	for key := range stateData {
-		if !strings.HasPrefix(key, "status:") {
+	count, _ := strconv.Atoi(stateData["nm_count"])
+	for i := 0; i < count; i++ {
+		statusName := stateData["nm:"+strconv.Itoa(i)]
+		if statusName == "" {
 			continue
 		}
-		statusName := strings.TrimPrefix(key, "status:")
 		label := statusName
 		if stateData["sel:"+statusName] == "1" {
 			label = "✅ " + statusName
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label, prefix+"_toggle:"+statusName),
+			tgbotapi.NewInlineKeyboardButtonData(label, prefix+"_toggle:"+strconv.Itoa(i)),
 		))
 	}
 
@@ -126,16 +135,23 @@ func buildStatusKeyboard(lang locale.Lang, stateData map[string]string, kind sta
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// handleStatusToggle toggles one status in the selection.
-func (h *Handler) handleStatusToggle(ctx context.Context, cq *tgbotapi.CallbackQuery, statusName string, kind statusKind) {
+// handleStatusToggle toggles one status in the selection. idxStr is the
+// index into the state's nm:<i> table populated by the picker.
+func (h *Handler) handleStatusToggle(ctx context.Context, cq *tgbotapi.CallbackQuery, idxStr string, kind statusKind) {
 	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
 
+	chatID := cq.Message.Chat.ID
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
 	prefix := kind.statePrefix()
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != prefix+"_select" {
+		return
+	}
+
+	statusName := data["nm:"+idxStr]
+	if statusName == "" {
 		return
 	}
 
@@ -144,7 +160,7 @@ func (h *Handler) handleStatusToggle(ctx context.Context, cq *tgbotapi.CallbackQ
 	} else {
 		data["sel:"+statusName] = "1"
 	}
-	h.states.Set(userID, prefix+"_select", data)
+	h.states.Set(chatID, userID, prefix+"_select", data)
 
 	keyboard := buildStatusKeyboard(lang, data, kind)
 	edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID, keyboard)
@@ -160,7 +176,7 @@ func (h *Handler) handleStatusSave(ctx context.Context, cq *tgbotapi.CallbackQue
 	lang := h.getLang(ctx, userID)
 
 	prefix := kind.statePrefix()
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != prefix+"_select" {
 		return
 	}
@@ -172,7 +188,7 @@ func (h *Handler) handleStatusSave(ctx context.Context, cq *tgbotapi.CallbackQue
 		}
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	var saveErr error
 	if kind == statusKindDone {
@@ -212,7 +228,7 @@ func (h *Handler) handleStatusClear(ctx context.Context, cq *tgbotapi.CallbackQu
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	var saveErr error
 	if kind == statusKindDone {

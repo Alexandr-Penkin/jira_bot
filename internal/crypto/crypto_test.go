@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,10 +98,10 @@ func TestDecrypt_CiphertextTooShort(t *testing.T) {
 	enc, err := NewEncryptor(key)
 	require.NoError(t, err)
 
-	// base64 of a very short byte slice (shorter than nonce)
+	// base64 of a very short byte slice (shorter than nonce) — falls
+	// through every key with no luck and surfaces ErrDecryptFailed.
 	_, err = enc.Decrypt("YQ==")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "ciphertext too short")
+	assert.ErrorIs(t, err, ErrDecryptFailed)
 }
 
 func TestDecrypt_TamperedCiphertext(t *testing.T) {
@@ -146,5 +147,64 @@ func TestDecrypt_WrongKey(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = enc2.Decrypt(ciphertext)
+	assert.ErrorIs(t, err, ErrDecryptFailed)
+}
+
+func TestKeyRotation_SecondaryKeyDecryptsLegacyValues(t *testing.T) {
+	// Operator scenario: an existing deploy has tokens encrypted under
+	// keyA. The operator wants to rotate to keyB. They start the bot
+	// with keyB as primary and keyA as a secondary — existing tokens
+	// continue to decrypt while new writes use keyB.
+	keyA := []byte("01234567890123456789012345678901")
+	keyB := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345")
+
+	oldEnc, err := NewEncryptor(keyA)
+	require.NoError(t, err)
+	legacy, err := oldEnc.Encrypt("rotated-secret")
+	require.NoError(t, err)
+
+	rotated, err := NewEncryptor(keyB)
+	require.NoError(t, err)
+	require.NoError(t, rotated.AddSecondaryKey(keyA))
+
+	pt, err := rotated.Decrypt(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, "rotated-secret", pt)
+
+	// New writes must encrypt under keyB; a fresh ciphertext produced
+	// here must NOT be decryptable by the old single-key encryptor.
+	fresh, err := rotated.Encrypt("new-secret")
+	require.NoError(t, err)
+	_, err = oldEnc.Decrypt(fresh)
+	assert.ErrorIs(t, err, ErrDecryptFailed)
+}
+
+func TestAddSecondaryKey_RejectsBadKey(t *testing.T) {
+	enc, err := NewEncryptor([]byte("01234567890123456789012345678901"))
+	require.NoError(t, err)
+
+	err = enc.AddSecondaryKey([]byte("too-short"))
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must be 32 bytes")
+}
+
+func TestDecrypt_LegacyUnversionedBlobStillWorks(t *testing.T) {
+	// Backward compat: blobs written before blob versioning landed
+	// have no leading 0x01 — they are raw nonce|ciphertext|tag.
+	// Construct one by hand and make sure Decrypt accepts it.
+	key := []byte("01234567890123456789012345678901")
+	enc, err := NewEncryptor(key)
+	require.NoError(t, err)
+
+	// Use Encrypt to get a valid blob, then strip the version byte.
+	versioned, err := enc.Encrypt("pre-migration-value")
+	require.NoError(t, err)
+	raw, err := base64.StdEncoding.DecodeString(versioned)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x01), raw[0])
+	legacy := base64.StdEncoding.EncodeToString(raw[1:])
+
+	pt, err := enc.Decrypt(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, "pre-migration-value", pt)
 }

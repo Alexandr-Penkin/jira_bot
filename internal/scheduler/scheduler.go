@@ -125,7 +125,16 @@ func (s *Scheduler) loadSchedules(ctx context.Context) error {
 func (s *Scheduler) addJob(report storage.ScheduledReport) error {
 	r := report
 	_, err := s.cron.AddFunc(r.CronExpression, func() {
-		s.executeReport(r)
+		// Derive each fire's context from s.cancelCtx so a Reload()
+		// or shutdown promptly cancels in-flight reports instead of
+		// only failing at reportQueryTimeout.
+		s.mu.Lock()
+		parent := s.cancelCtx
+		s.mu.Unlock()
+		if parent == nil {
+			return
+		}
+		s.executeReport(parent, r)
 	})
 	return err
 }
@@ -138,8 +147,8 @@ func (s *Scheduler) getLang(ctx context.Context, userID int64) locale.Lang {
 	return locale.FromString(user.Language)
 }
 
-func (s *Scheduler) executeReport(report storage.ScheduledReport) {
-	ctx, cancel := context.WithTimeout(s.cancelCtx, reportQueryTimeout)
+func (s *Scheduler) executeReport(parent context.Context, report storage.ScheduledReport) {
+	ctx, cancel := context.WithTimeout(parent, reportQueryTimeout)
 	defer cancel()
 
 	_ = s.pub.Publish(ctx, eventsv1.ScheduleDue{

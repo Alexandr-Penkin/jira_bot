@@ -148,7 +148,7 @@ func (h *Handler) showCreateFastConfirmation(ctx context.Context, chatID, userID
 		return
 	}
 
-	h.states.Set(userID, createFastConfirmPending, map[string]string{
+	h.states.Set(chatID, userID, createFastConfirmPending, map[string]string{
 		"payload":       string(payloadJSON),
 		"files":         string(filesJSON),
 		"epic_field_id": epicFieldID,
@@ -215,7 +215,7 @@ func (h *Handler) handleCreateFastConfirmCallback(ctx context.Context, cq *tgbot
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != createFastConfirmPending {
 		return
 	}
@@ -224,7 +224,7 @@ func (h *Handler) handleCreateFastConfirmCallback(ctx context.Context, cq *tgbot
 	}
 
 	if parts[1] == "cancel" {
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "action.cancelled")))
 		return
 	}
@@ -235,7 +235,7 @@ func (h *Handler) handleCreateFastConfirmCallback(ctx context.Context, cq *tgbot
 	var fields map[string]interface{}
 	if err := json.Unmarshal([]byte(data["payload"]), &fields); err != nil {
 		h.log.Error().Err(err).Msg("createfast: unmarshal payload for confirmation failed")
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
 		return
 	}
@@ -249,12 +249,12 @@ func (h *Handler) handleCreateFastConfirmCallback(ctx context.Context, cq *tgbot
 
 	user, err := h.requireAuth(ctx, userID)
 	if err != nil {
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected")))
 		return
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 	h.createFastFinalize(ctx, chatID, userID, user, fields, files, epicFieldID, lang)
 }
 
@@ -271,7 +271,7 @@ func (h *Handler) createFastFinalize(ctx context.Context, chatID, userID int64, 
 				if epicFieldID == "" {
 					epicFieldID = "parent"
 				}
-				h.stashCreateFastForEpic(userID, fields, files, epicFieldID)
+				h.stashCreateFastForEpic(chatID, userID, fields, files, epicFieldID)
 				h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.epic_required_retry")))
 				h.showCreateFastEpicPicker(ctx, chatID, userID, user, user.DefaultProject, lang)
 				return
@@ -300,7 +300,7 @@ func (h *Handler) createFastFinalize(ctx context.Context, chatID, userID int64, 
 // stashCreateFastForEpic serialises the in-flight CreateIssue payload plus
 // any pending Telegram attachments so the epic-callback can resume work
 // without re-running fillRequiredDefaults or re-asking the user for input.
-func (h *Handler) stashCreateFastForEpic(userID int64, fields map[string]interface{}, files []createFastFile, epicFieldID string) {
+func (h *Handler) stashCreateFastForEpic(chatID, userID int64, fields map[string]interface{}, files []createFastFile, epicFieldID string) {
 	payloadJSON, err := json.Marshal(fields)
 	if err != nil {
 		h.log.Error().Err(err).Msg("createfast: marshal payload for epic pending failed")
@@ -311,7 +311,7 @@ func (h *Handler) stashCreateFastForEpic(userID int64, fields map[string]interfa
 		h.log.Error().Err(err).Msg("createfast: marshal files for epic pending failed")
 		return
 	}
-	h.states.Set(userID, createFastEpicPending, map[string]string{
+	h.states.Set(chatID, userID, createFastEpicPending, map[string]string{
 		"payload":       string(payloadJSON),
 		"files":         string(filesJSON),
 		"epic_field_id": epicFieldID,
@@ -325,7 +325,7 @@ func (h *Handler) showCreateFastEpicPicker(ctx context.Context, chatID, userID i
 	result, err := h.jiraAPI.SearchIssues(ctx, user, jql, maxEpicOptions)
 	if err != nil {
 		h.log.Error().Err(err).Msg("createfast: failed to load epics")
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_epics")))
 		return
 	}
@@ -360,7 +360,7 @@ func (h *Handler) handleCreateFastEpicCallback(ctx context.Context, cq *tgbotapi
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != createFastEpicPending {
 		return
 	}
@@ -369,7 +369,7 @@ func (h *Handler) handleCreateFastEpicCallback(ctx context.Context, cq *tgbotapi
 	}
 
 	if parts[1] == "cancel" {
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "action.cancelled")))
 		return
 	}
@@ -383,7 +383,7 @@ func (h *Handler) handleCreateFastEpicCallback(ctx context.Context, cq *tgbotapi
 	var fields map[string]interface{}
 	if err := json.Unmarshal([]byte(data["payload"]), &fields); err != nil {
 		h.log.Error().Err(err).Msg("createfast: unmarshal payload for epic retry failed")
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed")))
 		return
 	}
@@ -402,12 +402,12 @@ func (h *Handler) handleCreateFastEpicCallback(ctx context.Context, cq *tgbotapi
 
 	user, err := h.requireAuth(ctx, userID)
 	if err != nil {
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected")))
 		return
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 	h.createFastFinalize(ctx, chatID, userID, user, fields, files, epicFieldID, lang)
 }
 

@@ -64,7 +64,7 @@ func (h *Handler) handleDailyJQLEdit(ctx context.Context, cq *tgbotapi.CallbackQ
 	chatID := cq.Message.Chat.ID
 	lang := h.getLang(ctx, userID)
 
-	h.states.Set(userID, state, nil)
+	h.states.Set(chatID, userID, state, nil)
 	h.sendPrompt(chatID, locale.T(lang, promptKey), lang)
 }
 

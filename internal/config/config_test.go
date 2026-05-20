@@ -274,3 +274,51 @@ func TestLoad_AdminTelegramIDEmptyLeavesZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), cfg.AdminTelegramID)
 }
+
+func TestLoad_WebhookSecretRequiredWhenEmbedded(t *testing.T) {
+	// Default EMBED_WEBHOOK_SERVER=true; an empty secret without an
+	// explicit opt-in must refuse to start so the monolith never
+	// exposes /webhook with unauthenticated ingress.
+	t.Setenv("TELEGRAM_TOKEN", "test-token")
+	t.Setenv("JIRA_CLIENT_ID", "cid")
+	t.Setenv("JIRA_CLIENT_SECRET", "csecret")
+	t.Setenv("ENCRYPTION_KEY", testEncryptionKey)
+	t.Setenv("JIRA_WEBHOOK_SECRET", "")
+	os.Unsetenv("ALLOW_UNSIGNED_WEBHOOKS")
+
+	cfg, err := Load()
+	assert.Nil(t, cfg)
+	assert.ErrorContains(t, err, "JIRA_WEBHOOK_SECRET is empty")
+}
+
+func TestLoad_WebhookSecretAllowedWithOptIn(t *testing.T) {
+	// Operators who explicitly accept the risk can keep running unsigned.
+	t.Setenv("TELEGRAM_TOKEN", "test-token")
+	t.Setenv("JIRA_CLIENT_ID", "cid")
+	t.Setenv("JIRA_CLIENT_SECRET", "csecret")
+	t.Setenv("ENCRYPTION_KEY", testEncryptionKey)
+	t.Setenv("JIRA_WEBHOOK_SECRET", "")
+	t.Setenv("ALLOW_UNSIGNED_WEBHOOKS", "true")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.AllowUnsignedWebhooks)
+	assert.Empty(t, cfg.JiraWebhookSecret)
+}
+
+func TestLoad_WebhookSecretCheckSkippedWhenNotEmbedded(t *testing.T) {
+	// When EMBED_WEBHOOK_SERVER=false the monolith doesn't expose
+	// /webhook, so the missing secret is not its problem — webhook-svc
+	// has its own ValidateWebhookAuth check.
+	t.Setenv("TELEGRAM_TOKEN", "test-token")
+	t.Setenv("JIRA_CLIENT_ID", "cid")
+	t.Setenv("JIRA_CLIENT_SECRET", "csecret")
+	t.Setenv("ENCRYPTION_KEY", testEncryptionKey)
+	t.Setenv("JIRA_WEBHOOK_SECRET", "")
+	t.Setenv("EMBED_WEBHOOK_SERVER", "false")
+	os.Unsetenv("ALLOW_UNSIGNED_WEBHOOKS")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.EmbedWebhookServer)
+}

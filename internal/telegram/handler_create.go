@@ -92,7 +92,7 @@ func (h *Handler) createAskProject(ctx context.Context, chatID, userID int64, us
 		return
 	}
 
-	h.states.Set(userID, "create_project", nil)
+	h.states.Set(chatID, userID, "create_project", nil)
 	h.sendPrompt(chatID, locale.T(lang, "create.enter_project"), lang)
 }
 
@@ -105,12 +105,12 @@ func (h *Handler) handleCreateProjectInput(ctx context.Context, chatID, userID i
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
 		return
 	}
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 	h.createShowIssueTypes(ctx, chatID, userID, projectKey, lang)
 }
 
 func (h *Handler) handleCreateSummaryInput(ctx context.Context, chatID, userID int64, text string) {
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	lang := h.getLang(ctx, userID)
 
 	if len(text) > maxSummaryLen {
@@ -119,7 +119,7 @@ func (h *Handler) handleCreateSummaryInput(ctx context.Context, chatID, userID i
 	}
 
 	data["summary"] = text
-	h.states.Set(userID, "create_desc_pending", data)
+	h.states.Set(chatID, userID, "create_desc_pending", data)
 
 	if defaultDesc, ok := data["desc_template"]; ok && defaultDesc != "" {
 		preview := format.TruncateRunes(defaultDesc, descMaxLen)
@@ -139,12 +139,12 @@ func (h *Handler) handleCreateSummaryInput(ctx context.Context, chatID, userID i
 	}
 
 	data["description"] = ""
-	h.states.Set(userID, "create_description", data)
+	h.states.Set(chatID, userID, "create_description", data)
 	h.sendPrompt(chatID, locale.T(lang, "create.enter_description"), lang)
 }
 
 func (h *Handler) handleCreateDescriptionInput(ctx context.Context, chatID, userID int64, text string) {
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	lang := h.getLang(ctx, userID)
 
 	if len(text) > maxDescriptionLen {
@@ -153,12 +153,12 @@ func (h *Handler) handleCreateDescriptionInput(ctx context.Context, chatID, user
 	}
 
 	data["description"] = text
-	h.states.Set(userID, "create_priority_pending", data)
+	h.states.Set(chatID, userID, "create_priority_pending", data)
 	h.createShowPriorities(ctx, chatID, userID, data, lang)
 }
 
 func (h *Handler) handleCreateAssigneeSearch(ctx context.Context, chatID, userID int64, text string) {
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	lang := h.getLang(ctx, userID)
 
 	user, err := h.userRepo.GetByTelegramID(ctx, userID)
@@ -184,7 +184,7 @@ func (h *Handler) handleCreateAssigneeSearch(ctx context.Context, chatID, userID
 	))
 
 	// Preserve state data while showing results.
-	h.states.Set(userID, "create_assignee_pending", data)
+	h.states.Set(chatID, userID, "create_assignee_pending", data)
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.assignee_results"))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
@@ -192,7 +192,7 @@ func (h *Handler) handleCreateAssigneeSearch(ctx context.Context, chatID, userID
 }
 
 func (h *Handler) handleCreateCustomFieldInput(ctx context.Context, chatID, userID int64, text string) {
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	lang := h.getLang(ctx, userID)
 
 	fieldID := data["cf_current"]
@@ -206,12 +206,12 @@ func (h *Handler) handleCreateCustomFieldInput(ctx context.Context, chatID, user
 	}
 
 	data["cf:"+fieldID] = text
-	h.states.Set(userID, "create_cf_next", data)
+	h.states.Set(chatID, userID, "create_cf_next", data)
 	h.advanceToNextCustomField(ctx, chatID, userID, data, lang)
 }
 
 func (h *Handler) handleCreateEpicKeyInput(ctx context.Context, chatID, userID int64, text string) {
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	lang := h.getLang(ctx, userID)
 
 	key := strings.ToUpper(strings.TrimSpace(text))
@@ -226,12 +226,12 @@ func (h *Handler) handleCreateEpicKeyInput(ctx context.Context, chatID, userID i
 		h.handleCreateConfirm(ctx, chatID, userID, data, lang)
 		return
 	}
-	h.states.Set(userID, "create_cf_pending", data)
+	h.states.Set(chatID, userID, "create_cf_pending", data)
 	h.startCustomFields(ctx, chatID, userID, data, lang)
 }
 
 func (h *Handler) handleCreateTemplateNameInput(ctx context.Context, chatID, userID int64, text string) {
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	lang := h.getLang(ctx, userID)
 
 	if len(text) > maxTemplateNameLen {
@@ -260,7 +260,7 @@ func (h *Handler) handleCreateTemplateNameInput(ctx context.Context, chatID, use
 		return
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 	h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.tmpl_saved", text)))
 }
 
@@ -286,7 +286,7 @@ func (h *Handler) createShowIssueTypes(ctx context.Context, chatID, userID int64
 	}
 
 	data := map[string]string{"project": projectKey}
-	h.states.Set(userID, "create_type_pending", data)
+	h.states.Set(chatID, userID, "create_type_pending", data)
 
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(issueTypes)+1)
 	for _, it := range issueTypes {
@@ -313,12 +313,12 @@ func (h *Handler) createShowPriorities(ctx context.Context, chatID, userID int64
 	priorities, err := h.jiraAPI.GetPriorities(ctx, user)
 	if err != nil || len(priorities) == 0 {
 		// Priority not available — skip to assignee.
-		h.states.Set(userID, "create_assignee_pending", data)
+		h.states.Set(chatID, userID, "create_assignee_pending", data)
 		h.createShowAssigneeOptions(chatID, userID, data, lang)
 		return
 	}
 
-	h.states.Set(userID, "create_priority_pending", data)
+	h.states.Set(chatID, userID, "create_priority_pending", data)
 
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(priorities)+1)
 	for _, p := range priorities {
@@ -336,7 +336,7 @@ func (h *Handler) createShowPriorities(ctx context.Context, chatID, userID int64
 }
 
 func (h *Handler) createShowAssigneeOptions(chatID, userID int64, data map[string]string, lang locale.Lang) {
-	h.states.Set(userID, "create_assignee_pending", data)
+	h.states.Set(chatID, userID, "create_assignee_pending", data)
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.choose_assignee"))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
@@ -362,7 +362,7 @@ func (h *Handler) createShowTemplateField(chatID, userID int64, data map[string]
 		_ = json.Unmarshal([]byte(avJSON), &values)
 	}
 	if len(values) == 0 {
-		h.states.Set(userID, "create_summary", data)
+		h.states.Set(chatID, userID, "create_summary", data)
 		h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
 		return
 	}
@@ -390,7 +390,7 @@ func (h *Handler) createShowTemplateField(chatID, userID int64, data map[string]
 		))
 	}
 
-	h.states.Set(userID, "create_tplf_pending", data)
+	h.states.Set(chatID, userID, "create_tplf_pending", data)
 
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.choose_field", fieldName))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
@@ -400,7 +400,7 @@ func (h *Handler) createShowTemplateField(chatID, userID int64, data map[string]
 // createMaybeAskEpic routes to the Epic picker step if Epic is required, otherwise skips to custom fields.
 func (h *Handler) createMaybeAskEpic(ctx context.Context, chatID, userID int64, data map[string]string, lang locale.Lang) {
 	if data["epic_required"] != "1" {
-		h.states.Set(userID, "create_cf_pending", data)
+		h.states.Set(chatID, userID, "create_cf_pending", data)
 		h.startCustomFields(ctx, chatID, userID, data, lang)
 		return
 	}
@@ -421,7 +421,7 @@ func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int6
 		h.log.Error().Err(err).Msg("failed to load epics")
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.failed_epics")))
 		// Fall back to manual key entry.
-		h.states.Set(userID, "create_epic_key", data)
+		h.states.Set(chatID, userID, "create_epic_key", data)
 		h.sendPrompt(chatID, locale.T(lang, "create.enter_epic_key"), lang)
 		return
 	}
@@ -451,7 +451,7 @@ func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int6
 		))
 	}
 
-	h.states.Set(userID, "create_epic_pending", data)
+	h.states.Set(chatID, userID, "create_epic_pending", data)
 
 	prompt := "create.choose_epic"
 	if len(result.Issues) == 0 {
@@ -463,7 +463,7 @@ func (h *Handler) createShowEpicOptions(ctx context.Context, chatID, userID int6
 }
 
 func (h *Handler) createShowConfirmation(chatID, userID int64, data map[string]string, lang locale.Lang) {
-	h.states.Set(userID, "create_confirm_pending", data)
+	h.states.Set(chatID, userID, "create_confirm_pending", data)
 
 	text := h.buildCreateConfirmation(data, lang)
 	msg := tgbotapi.NewMessage(chatID, text)
@@ -494,7 +494,7 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 	}
 
 	action := parts[1]
-	_, data := h.states.Get(userID)
+	_, data := h.states.Get(chatID, userID)
 	if data == nil {
 		data = make(map[string]string)
 	}
@@ -533,14 +533,14 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 		case "keep":
 			data["description"] = data["desc_template"]
 			data["desc_is_adf"] = "true"
-			h.states.Set(userID, "create_priority_pending", data)
+			h.states.Set(chatID, userID, "create_priority_pending", data)
 			h.createShowPriorities(ctx, chatID, userID, data, lang)
 		case "edit":
-			h.states.Set(userID, "create_description", data)
+			h.states.Set(chatID, userID, "create_description", data)
 			h.sendPrompt(chatID, locale.T(lang, "create.enter_description"), lang)
 		case "skip":
 			data["description"] = ""
-			h.states.Set(userID, "create_priority_pending", data)
+			h.states.Set(chatID, userID, "create_priority_pending", data)
 			h.createShowPriorities(ctx, chatID, userID, data, lang)
 		}
 
@@ -554,7 +554,7 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 				data["priority_name"] = parts[3]
 			}
 		}
-		h.states.Set(userID, "create_assignee_pending", data)
+		h.states.Set(chatID, userID, "create_assignee_pending", data)
 		h.createShowAssigneeOptions(chatID, userID, data, lang)
 
 	case "asgn":
@@ -572,7 +572,7 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			data["assignee_name"] = user.JiraDisplayName
 			h.createMaybeAskEpic(ctx, chatID, userID, data, lang)
 		case "search":
-			h.states.Set(userID, "create_assignee_search", data)
+			h.states.Set(chatID, userID, "create_assignee_search", data)
 			h.sendPrompt(chatID, locale.T(lang, "create.search_assignee"), lang)
 		case "skip":
 			h.createMaybeAskEpic(ctx, chatID, userID, data, lang)
@@ -603,7 +603,7 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 		}
 		if parts[2] == "skip" {
 			// Skip only allowed if epic not required; enforced by button visibility.
-			h.states.Set(userID, "create_cf_pending", data)
+			h.states.Set(chatID, userID, "create_cf_pending", data)
 			h.startCustomFields(ctx, chatID, userID, data, lang)
 			return
 		}
@@ -617,11 +617,11 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			h.handleCreateConfirm(ctx, chatID, userID, data, lang)
 			return
 		}
-		h.states.Set(userID, "create_cf_pending", data)
+		h.states.Set(chatID, userID, "create_cf_pending", data)
 		h.startCustomFields(ctx, chatID, userID, data, lang)
 
 	case "epic_manual":
-		h.states.Set(userID, "create_epic_key", data)
+		h.states.Set(chatID, userID, "create_epic_key", data)
 		h.sendPrompt(chatID, locale.T(lang, "create.enter_epic_key"), lang)
 
 	case "tplf":
@@ -663,7 +663,7 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 				h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "create.template_no_sample", selectedLabel)))
 			}
 		}
-		h.states.Set(userID, "create_summary", data)
+		h.states.Set(chatID, userID, "create_summary", data)
 		h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
 
 	case "cf":
@@ -671,31 +671,37 @@ func (h *Handler) handleCreateCallback(ctx context.Context, cq *tgbotapi.Callbac
 			return
 		}
 		fieldID := parts[2]
-		valueID := parts[3]
-		// For select fields, store value and name.
-		data["cf:"+fieldID] = valueID
-		if len(parts) >= 5 {
-			data["cfval:"+fieldID] = parts[4]
+		idxStr := parts[3]
+		// The picker stored the real valueID + display label keyed by
+		// the option index in cfopt: / cfoptlbl:, so the callback can
+		// stay short and never carry user-controlled strings.
+		valueID := data["cfopt:"+fieldID+":"+idxStr]
+		if valueID == "" {
+			return
 		}
-		h.states.Set(userID, "create_cf_next", data)
+		data["cf:"+fieldID] = valueID
+		if label := data["cfoptlbl:"+fieldID+":"+idxStr]; label != "" {
+			data["cfval:"+fieldID] = label
+		}
+		h.states.Set(chatID, userID, "create_cf_next", data)
 		h.advanceToNextCustomField(ctx, chatID, userID, data, lang)
 
 	case "cf_skip":
 		if len(parts) < 3 {
 			return
 		}
-		h.states.Set(userID, "create_cf_next", data)
+		h.states.Set(chatID, userID, "create_cf_next", data)
 		h.advanceToNextCustomField(ctx, chatID, userID, data, lang)
 
 	case "confirm":
 		h.handleCreateConfirm(ctx, chatID, userID, data, lang)
 
 	case "save_tmpl":
-		h.states.Set(userID, "create_template_name", data)
+		h.states.Set(chatID, userID, "create_template_name", data)
 		h.sendPrompt(chatID, locale.T(lang, "create.enter_tmpl_name"), lang)
 
 	case "cancel":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "action.cancelled")))
 
 	case "tmpl_del":
@@ -818,7 +824,7 @@ func (h *Handler) createFetchFieldsAndAskSummary(ctx context.Context, chatID, us
 		h.sendTemplateBody(chatID, lang, body)
 	}
 
-	h.states.Set(userID, "create_summary", data)
+	h.states.Set(chatID, userID, "create_summary", data)
 	h.sendPrompt(chatID, locale.T(lang, "create.enter_summary"), lang)
 }
 
@@ -912,7 +918,7 @@ func (h *Handler) handleCreateConfirm(ctx context.Context, chatID, userID int64,
 		return
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	issueURL := fmt.Sprintf("%s/browse/%s", user.JiraSiteURL, resp.Key)
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "create.success", format.EscapeMarkdownV2(resp.Key), format.EscapeMarkdownV2URL(issueURL)))
@@ -959,7 +965,7 @@ func (h *Handler) startCustomFields(ctx context.Context, chatID, userID int64, d
 	}
 
 	data["cf_idx"] = "0"
-	h.states.Set(userID, "create_cf_pending", data)
+	h.states.Set(chatID, userID, "create_cf_pending", data)
 	h.advanceToNextCustomField(ctx, chatID, userID, data, lang)
 }
 
@@ -993,14 +999,14 @@ func (h *Handler) advanceToNextCustomField(_ context.Context, chatID, userID int
 	if avJSON, ok := data["cfav:"+fieldID]; ok && avJSON != "" {
 		var allowedValues []jira.CreateMetaValue
 		if json.Unmarshal([]byte(avJSON), &allowedValues) == nil && len(allowedValues) > 0 {
-			h.states.Set(userID, "create_cf_select", data)
-			h.showCustomFieldSelect(chatID, fieldID, fieldName, allowedValues, required, lang)
+			h.showCustomFieldSelect(chatID, fieldID, fieldName, allowedValues, required, lang, data)
+			h.states.Set(chatID, userID, "create_cf_select", data)
 			return
 		}
 	}
 
 	// Text/number input.
-	h.states.Set(userID, "create_custom_field", data)
+	h.states.Set(chatID, userID, "create_custom_field", data)
 	prompt := locale.T(lang, "create.enter_field", fieldName)
 	if fieldType == "number" {
 		prompt = locale.T(lang, "create.enter_field_number", fieldName)
@@ -1019,23 +1025,42 @@ func (h *Handler) advanceToNextCustomField(_ context.Context, chatID, userID int
 	}
 }
 
-func (h *Handler) showCustomFieldSelect(chatID int64, fieldID, fieldName string, values []jira.CreateMetaValue, required bool, lang locale.Lang) {
+// showCustomFieldSelect renders the inline keyboard for an allowed-values
+// custom field. Callback-data carries (fieldID, index-into-state-table)
+// rather than (fieldID, valueID) directly: Jira custom-field value IDs can
+// be long enough to push past Telegram's 64-byte callback limit, and a
+// past byte-truncation hack here silently corrupted the payload. The
+// option index is always 1–2 bytes and is resolved back to the real
+// valueID + display name through the state map populated below.
+//
+// data is mutated in place; the caller is expected to persist it via
+// h.states.Set after this returns.
+func (h *Handler) showCustomFieldSelect(chatID int64, fieldID, fieldName string, values []jira.CreateMetaValue, required bool, lang locale.Lang, data map[string]string) {
 	if len(values) > maxSelectOptions {
 		values = values[:maxSelectOptions]
 	}
 
+	// Drop any stale option mapping carried over from a previous
+	// invocation of the same field so indices stay aligned.
+	prefix := "cfopt:" + fieldID + ":"
+	for k := range data {
+		if strings.HasPrefix(k, prefix) {
+			delete(data, k)
+		}
+	}
+
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(values)+1)
-	for _, v := range values {
+	for i, v := range values {
 		displayName := v.Name
 		if displayName == "" {
 			displayName = v.Value
 		}
-		// Callback: cr:cf:{fieldID}:{valueID}:{displayName}
-		cbData := fmt.Sprintf("cr:cf:%s:%s", fieldID, v.ID)
-		// Truncate if too long for callback (64 bytes max).
-		if len(cbData) > 60 {
-			cbData = cbData[:60]
+		idxStr := strconv.Itoa(i)
+		data[prefix+idxStr] = v.ID
+		if displayName != "" {
+			data["cfoptlbl:"+fieldID+":"+idxStr] = displayName
 		}
+		cbData := "cr:cf:" + fieldID + ":" + idxStr
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(displayName, cbData),
 		))

@@ -27,7 +27,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -57,6 +56,7 @@ import (
 	"SleepJiraBot/internal/storage"
 	"SleepJiraBot/internal/telegram"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/preferencesclient"
@@ -173,8 +173,11 @@ func main() {
 	log.Info().Str("subject", eventsv1.SubjectNotifyRequested).Str("durable", durableName).Msg("consuming notify.requested events")
 
 	healthSrv := &http.Server{
-		Addr:              getEnv("TELEGRAM_SVC_ADDR", ":8084"),
-		Handler:           healthHandler(),
+		Addr: getEnv("TELEGRAM_SVC_ADDR", ":8084"),
+		Handler: health.Mux(health.Probe{
+			Name:  "nats",
+			Check: func(_ context.Context) error { return jsPub.Healthy() },
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -354,12 +357,7 @@ func startUpdateHandler(
 		cleanup()
 		return nil, nil, errors.New("ENCRYPTION_KEY must be 64 hex characters (32 bytes) for telegram-svc update handling")
 	}
-	encKeyBytes, err := hex.DecodeString(cfg.EncryptionKey)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	enc, err := crypto.NewEncryptor(encKeyBytes)
+	enc, err := crypto.NewEncryptorFromHex(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -454,15 +452,6 @@ func startUpdateHandler(
 
 	log.Info().Msg("telegram-svc: update handler wired; starting long-poll loop")
 	return bot, cleanup, nil
-}
-
-func healthHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	return mux
 }
 
 func getEnv(key, def string) string {

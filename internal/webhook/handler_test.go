@@ -16,6 +16,7 @@ import (
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
+	eventsv1 "SleepJiraBot/pkg/events/v1"
 )
 
 func TestEscapeMarkdown(t *testing.T) {
@@ -235,4 +236,43 @@ type errorReader struct{}
 
 func (e *errorReader) Read(_ []byte) (int, error) {
 	return 0, io.ErrUnexpectedEOF
+}
+
+func TestServeHTTP_UnsignedRejectedByDefault(t *testing.T) {
+	// Regression: with no secret and no operator opt-in, every POST
+	// must fail closed. Previously the handler silently accepted these,
+	// so anyone who learned the URL could fan out forged notifications.
+	h := &Handler{
+		log:        zerolog.Nop(),
+		sem:        make(chan struct{}, maxConcurrentJobs),
+		eventQueue: make(chan Event, eventQueueSize),
+	}
+
+	body := []byte(`{"webhookEvent":"jira:issue_updated"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeHTTP_UnsignedAcceptedWhenOptedIn(t *testing.T) {
+	// Operators who genuinely rely on URL secrecy / network ACL can
+	// opt back into unsigned ingress with ALLOW_UNSIGNED_WEBHOOKS=true.
+	h := &Handler{
+		allowUnsigned: true,
+		log:           zerolog.Nop(),
+		sem:           make(chan struct{}, maxConcurrentJobs),
+		eventQueue:    make(chan Event, eventQueueSize),
+		pub:           eventsv1.NoopPublisher{},
+	}
+
+	body := []byte(`{"webhookEvent":"jira:issue_updated"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }

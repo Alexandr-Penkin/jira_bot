@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -26,7 +27,7 @@ func (h *Handler) handleIssueTypesStart(ctx context.Context, chatID, userID int6
 		return
 	}
 
-	h.states.Set(userID, "it_project", nil)
+	h.states.Set(chatID, userID, "it_project", nil)
 	h.sendPrompt(chatID, locale.T(lang, "issuetypes.enter_project"), lang)
 }
 
@@ -59,32 +60,40 @@ func (h *Handler) showIssueTypePicker(ctx context.Context, chatID, userID int64,
 	}
 
 	stateData := map[string]string{"project": projectKey}
-	for _, t := range issueTypes {
-		stateData["type:"+t.Name] = "available"
+	// Names go into ordered nm:<idx> slots so the callback payload can
+	// reference them by index. Putting the raw name in callback-data
+	// breaks parsing when a Jira-defined issue type contains ':'
+	// (e.g. "API: REST") because handler.go splits on ':'.
+	stateData["nm_count"] = strconv.Itoa(len(issueTypes))
+	for i, t := range issueTypes {
+		stateData["nm:"+strconv.Itoa(i)] = t.Name
 		if selected[t.Name] == "1" {
 			stateData["sel:"+t.Name] = "1"
 		}
 	}
-	h.states.Set(userID, "it_select", stateData)
+	h.states.Set(chatID, userID, "it_select", stateData)
 
 	h.sendIssueTypePickerMessage(chatID, lang, stateData)
 }
 
 // buildIssueTypeKeyboard builds the inline keyboard for issue type selection.
+// Callbacks carry the index into the nm:<idx> table rather than the raw
+// name so Jira types with ':' in them survive callback parsing.
 func buildIssueTypeKeyboard(lang locale.Lang, stateData map[string]string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 
-	for key := range stateData {
-		if !strings.HasPrefix(key, "type:") {
+	count, _ := strconv.Atoi(stateData["nm_count"])
+	for i := 0; i < count; i++ {
+		typeName := stateData["nm:"+strconv.Itoa(i)]
+		if typeName == "" {
 			continue
 		}
-		typeName := strings.TrimPrefix(key, "type:")
 		label := typeName
 		if stateData["sel:"+typeName] == "1" {
 			label = "✅ " + typeName
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label, "it_toggle:"+typeName),
+			tgbotapi.NewInlineKeyboardButtonData(label, "it_toggle:"+strconv.Itoa(i)),
 		))
 	}
 
@@ -97,14 +106,23 @@ func buildIssueTypeKeyboard(lang locale.Lang, stateData map[string]string) tgbot
 }
 
 // handleIssueTypeToggle toggles one issue type in the selection.
-func (h *Handler) handleIssueTypeToggle(ctx context.Context, cq *tgbotapi.CallbackQuery, typeName string) {
+// idxStr is the index into the state's nm:<i> table, set up by the
+// picker. Resolving the name from state avoids putting Jira-controlled
+// strings (which may contain ':') in the callback payload.
+func (h *Handler) handleIssueTypeToggle(ctx context.Context, cq *tgbotapi.CallbackQuery, idxStr string) {
 	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
 
+	chatID := cq.Message.Chat.ID
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != "it_select" {
+		return
+	}
+
+	typeName := data["nm:"+idxStr]
+	if typeName == "" {
 		return
 	}
 
@@ -113,7 +131,7 @@ func (h *Handler) handleIssueTypeToggle(ctx context.Context, cq *tgbotapi.Callba
 	} else {
 		data["sel:"+typeName] = "1"
 	}
-	h.states.Set(userID, "it_select", data)
+	h.states.Set(chatID, userID, "it_select", data)
 
 	keyboard := buildIssueTypeKeyboard(lang, data)
 	edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID, keyboard)
@@ -128,7 +146,7 @@ func (h *Handler) handleIssueTypeSave(ctx context.Context, cq *tgbotapi.Callback
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 	if step != "it_select" {
 		return
 	}
@@ -140,7 +158,7 @@ func (h *Handler) handleIssueTypeSave(ctx context.Context, cq *tgbotapi.Callback
 		}
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	if err := h.prefs.SetSprintIssueTypes(ctx, userID, selected); err != nil {
 		h.log.Error().Err(err).Msg("failed to save sprint issue types")
@@ -173,7 +191,7 @@ func (h *Handler) handleIssueTypeClear(ctx context.Context, cq *tgbotapi.Callbac
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	if err := h.prefs.SetSprintIssueTypes(ctx, userID, nil); err != nil {
 		h.log.Error().Err(err).Msg("failed to clear sprint issue types")

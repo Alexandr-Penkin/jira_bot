@@ -37,6 +37,7 @@ type Handler struct {
 	userRepo       *storage.UserRepo
 	notifier       notifier.Notifier
 	webhookSecret  string
+	allowUnsigned  bool
 	log            zerolog.Logger
 	sem            chan struct{}
 	eventQueue     chan Event
@@ -74,17 +75,33 @@ h1{font-size:1.4rem;margin-bottom:.3rem}p{line-height:1.5;color:#444}.ok{color:#
 		h.eventsReceived.Load())
 }
 
-func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, n notifier.Notifier, webhookSecret string, log zerolog.Logger, dedup notifydedup.Allower) *Handler {
+func NewHandler(subRepo *storage.SubscriptionRepo, userRepo *storage.UserRepo, n notifier.Notifier, webhookSecret string, allowUnsigned bool, log zerolog.Logger, dedup notifydedup.Allower) *Handler {
 	h := &Handler{
 		subRepo:       subRepo,
 		userRepo:      userRepo,
 		notifier:      n,
 		webhookSecret: webhookSecret,
+		allowUnsigned: allowUnsigned,
 		log:           log,
 		sem:           make(chan struct{}, maxConcurrentJobs),
 		eventQueue:    make(chan Event, eventQueueSize),
 		dedup:         dedup,
 		pub:           eventsv1.NoopPublisher{},
+	}
+
+	switch {
+	case webhookSecret != "":
+		log.Info().Msg("webhook: signature verification enabled (X-Hub-Signature)")
+	case allowUnsigned:
+		// Explicit operator opt-in. Still loud so it shows up on every
+		// startup — an attacker who learns the URL can otherwise fan
+		// out arbitrary notifications.
+		log.Warn().Msg("webhook: ALLOW_UNSIGNED_WEBHOOKS=true; accepting POSTs without signature verification — ensure /webhook is protected by network ACL or reverse-proxy auth")
+	default:
+		// Refusing to accept unsigned webhooks; ServeHTTP will reply
+		// 403 to every POST. Surface the error here so the operator
+		// sees it at startup, not on the first failed event.
+		log.Error().Msg("webhook: JIRA_WEBHOOK_SECRET is empty and ALLOW_UNSIGNED_WEBHOOKS is not set — every incoming POST will be rejected with 403")
 	}
 
 	return h
@@ -171,17 +188,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn().Int("size", len(body)).Msg("webhook body hit size limit, payload may be truncated")
 	}
 
-	// Signature verification is opt-in: Jira Cloud's dynamic-webhook
-	// registration API does not expose a signing-secret field, so
-	// payloads arrive unsigned unless the operator has wired a secret in
-	// out-of-band (e.g. Connect app). When the secret is empty we trust
-	// the URL, which must be protected by other means.
-	if h.webhookSecret != "" {
+	// Authentication ladder, fail-closed by default:
+	//   - Secret configured → require a matching X-Hub-Signature.
+	//   - No secret + ALLOW_UNSIGNED_WEBHOOKS=true → accept (operator
+	//     accepted the risk; the URL must be protected externally).
+	//   - No secret + no opt-in → reject every POST.
+	// Jira Cloud's dynamic-webhook registration API doesn't expose a
+	// signing-secret field, so operators wire the secret in out-of-band
+	// (Connect app, custom proxy).
+	switch {
+	case h.webhookSecret != "":
 		if !h.verifySignature(body, r.Header.Get("X-Hub-Signature")) {
 			h.log.Warn().Msg("webhook signature verification failed")
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+	case !h.allowUnsigned:
+		// Don't log per-request at Warn — an attacker could flood the
+		// log file. Debug is enough; startup already emitted a loud
+		// Error so the misconfiguration is obvious.
+		h.log.Debug().Msg("webhook: rejecting unsigned POST; configure JIRA_WEBHOOK_SECRET or set ALLOW_UNSIGNED_WEBHOOKS=true to accept unsigned ingress")
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	var event Event

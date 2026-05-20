@@ -175,7 +175,7 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 			}
 			return h.handleSprintProject(ctx, chatID, userID, user.DefaultProject)
 		}
-		h.states.Set(userID, "sprint_project", nil)
+		h.states.Set(chatID, userID, "sprint_project", nil)
 		h.handleSprintStart(chatID, h.getLang(ctx, userID))
 		return tgbotapi.MessageConfig{}
 	case "daily":
@@ -257,7 +257,7 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 		return tgbotapi.MessageConfig{}
 	case "defaults":
 		lang := h.getLang(ctx, userID)
-		h.states.Set(userID, "defaults_project", nil)
+		h.states.Set(chatID, userID, "defaults_project", nil)
 		h.sendPrompt(chatID, locale.T(lang, "defaults.enter_project"), lang)
 		return tgbotapi.MessageConfig{}
 	case "admin":
@@ -437,7 +437,7 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 func (h *Handler) handleMenuCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, menu string) {
 	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
 
-	h.states.Clear(cq.From.ID)
+	h.states.Clear(cq.Message.Chat.ID, cq.From.ID)
 	lang := h.getLang(ctx, cq.From.ID)
 
 	var text string
@@ -526,26 +526,26 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 	case "daily":
 		h.sendMessage(withMenuButton(h.handleDaily(ctx, chatID, userID), lang))
 	case "daily_user":
-		h.states.Set(userID, "daily_search", nil)
+		h.states.Set(chatID, userID, "daily_search", nil)
 		h.sendPrompt(chatID, locale.T(lang, "daily.enter_user"), lang)
 	case "issue":
-		h.states.Set(userID, "issue", nil)
+		h.states.Set(chatID, userID, "issue", nil)
 		h.sendPrompt(chatID, locale.T(lang, "issue.enter_key"), lang)
 	case "list":
 		h.sendMessage(withMenuButton(h.handleList(ctx, chatID, userID, ""), lang))
 	case "filters":
 		h.sendMessage(withMenuButton(h.handleFilters(ctx, chatID, userID), lang))
 	case "listjql":
-		h.states.Set(userID, "list_jql", nil)
+		h.states.Set(chatID, userID, "list_jql", nil)
 		h.sendPrompt(chatID, locale.T(lang, "list.enter_jql"), lang)
 	case "comment":
-		h.states.Set(userID, "comment_key", nil)
+		h.states.Set(chatID, userID, "comment_key", nil)
 		h.sendPrompt(chatID, locale.T(lang, "comment.enter_key"), lang)
 	case "trans":
-		h.states.Set(userID, "trans_key", nil)
+		h.states.Set(chatID, userID, "trans_key", nil)
 		h.sendPrompt(chatID, locale.T(lang, "transition.enter_key"), lang)
 	case "assign":
-		h.states.Set(userID, "assign_key", nil)
+		h.states.Set(chatID, userID, "assign_key", nil)
 		h.sendPrompt(chatID, locale.T(lang, "assign.enter_key"), lang)
 	case "subscribe":
 		h.handleSubscribeMenu(chatID, lang)
@@ -562,10 +562,10 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 			}
 			return
 		}
-		h.states.Set(userID, "sprint_project", nil)
+		h.states.Set(chatID, userID, "sprint_project", nil)
 		h.handleSprintStart(chatID, lang)
 	case "sched":
-		h.states.Set(userID, "schedule", nil)
+		h.states.Set(chatID, userID, "schedule", nil)
 		h.sendPrompt(chatID, locale.T(lang, "schedule.enter"), lang)
 	case "dailysub":
 		h.handleDailySubMenu(ctx, chatID, userID)
@@ -574,7 +574,7 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 	case "scheds":
 		h.sendMessage(withMenuButton(h.handleSchedules(ctx, chatID, userID), lang))
 	case "defaults":
-		h.states.Set(userID, "defaults_project", nil)
+		h.states.Set(chatID, userID, "defaults_project", nil)
 		h.sendPrompt(chatID, locale.T(lang, "defaults.enter_project"), lang)
 	case "issuetypes":
 		h.handleIssueTypesStart(ctx, chatID, userID)
@@ -595,7 +595,7 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 	case "lang":
 		h.sendMessage(h.handleLang(chatID, lang))
 	case "cancel":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "action.cancelled")))
 	}
 }
@@ -605,7 +605,7 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message) {
 	userID := message.From.ID
 	chatID := message.Chat.ID
-	step, data := h.states.Get(userID)
+	step, data := h.states.Get(chatID, userID)
 
 	text := strings.TrimSpace(message.Text)
 	if text == "" {
@@ -627,7 +627,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 
 	switch step {
 	case "issue":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		if !validateIssueKey(text) {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "issue.invalid_key_short")))
 			return
@@ -635,7 +635,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.sendMessage(withMenuButton(h.handleIssue(ctx, chatID, userID, text), lang))
 
 	case "list_jql":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		if len(text) > maxJQLLen {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "list.jql_too_long", maxJQLLen)))
 			return
@@ -647,11 +647,11 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "issue.invalid_key_short")))
 			return
 		}
-		h.states.Set(userID, "comment_text", map[string]string{"issue_key": text})
+		h.states.Set(chatID, userID, "comment_text", map[string]string{"issue_key": text})
 		h.sendPrompt(chatID, locale.T(lang, "comment.enter_text", text), lang)
 
 	case "comment_text":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		issueKey := data["issue_key"]
 		if len(text) > maxCommentLen {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "comment.too_long", maxCommentLen)))
@@ -660,7 +660,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.sendMessage(withMenuButton(h.handleComment(ctx, chatID, userID, issueKey, text), lang))
 
 	case "trans_key":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		if !validateIssueKey(text) {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "issue.invalid_key_short")))
 			return
@@ -668,7 +668,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.sendMessage(h.handleTransition(ctx, chatID, userID, text))
 
 	case "assign_key":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		if !validateIssueKey(text) {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "issue.invalid_key_short")))
 			return
@@ -676,19 +676,19 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.sendMessage(withMenuButton(h.handleAssign(ctx, chatID, userID, text), lang))
 
 	case "sub_project":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.handleSubProjectInput(ctx, chatID, userID, text, lang)
 
 	case "sub_issue":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.handleSubIssueInput(ctx, chatID, userID, text, lang)
 
 	case "daily_search":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(withMenuButton(h.handleDailySearch(ctx, chatID, userID, text), lang))
 
 	case "sprint_project":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		inputParts := strings.SplitN(text, " ", 3)
 		projectKey := strings.ToUpper(inputParts[0])
 		if !validateProjectKey(projectKey) {
@@ -706,7 +706,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.sendMessage(h.handleSprintFull(ctx, chatID, userID, projectKey, boardHint, sprintHint))
 
 	case "defaults_project":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		if text == "-" {
 			if err := h.prefs.SetDefaults(ctx, userID, "", 0); err != nil {
 				h.log.Error().Err(err).Msg("failed to clear defaults")
@@ -722,22 +722,22 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.sendMessage(h.handleDefaultsProject(ctx, chatID, userID, projectKey))
 
 	case "defaults_board":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		projectKey := data["project"]
 		h.sendMessage(h.handleDefaultsBoard(ctx, chatID, userID, projectKey, text))
 
 	case "sprint_board":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		projectKey := data["project"]
 		h.sendMessage(h.handleSprintFull(ctx, chatID, userID, projectKey, text, ""))
 
 	case "sprint_sprint":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		boardID, _ := strconv.Atoi(data["board_id"])
 		h.sendMessage(h.handleSprintBoardWithHint(ctx, chatID, userID, boardID, text))
 
 	case "it_project":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		projectKey := strings.ToUpper(text)
 		if !validateProjectKey(projectKey) {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
@@ -746,7 +746,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.showIssueTypePicker(ctx, chatID, userID, projectKey)
 
 	case "ds_project":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		projectKey := strings.ToUpper(text)
 		if !validateProjectKey(projectKey) {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
@@ -755,7 +755,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.showStatusPicker(ctx, chatID, userID, projectKey, statusKindDone)
 
 	case "hs_project":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		projectKey := strings.ToUpper(text)
 		if !validateProjectKey(projectKey) {
 			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
@@ -764,19 +764,19 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.showStatusPicker(ctx, chatID, userID, projectKey, statusKindHold)
 
 	case "daily_jql_done":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.handleDailyJQLSave(ctx, chatID, userID, lang, "done", text)
 
 	case "daily_jql_doing":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.handleDailyJQLSave(ctx, chatID, userID, lang, "doing", text)
 
 	case "daily_jql_plan":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.handleDailyJQLSave(ctx, chatID, userID, lang, "plan", text)
 
 	case "schedule":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		h.sendMessage(withMenuButton(h.handleSchedule(ctx, chatID, userID, text), lang))
 
 	case dailySubStateCustom:
@@ -807,7 +807,7 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 		h.handleCreateTemplateNameInput(ctx, chatID, userID, text)
 
 	case "admin_broadcast":
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 		if !h.isAdmin(userID) {
 			return
 		}

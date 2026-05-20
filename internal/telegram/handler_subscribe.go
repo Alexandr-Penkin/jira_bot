@@ -68,11 +68,11 @@ func (h *Handler) handleSubCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 		h.createSimpleSubscription(ctx, chatID, userID, subType, lang)
 
 	case storage.SubTypeProjectUpdates:
-		h.states.Set(userID, "sub_project", nil)
+		h.states.Set(chatID, userID, "sub_project", nil)
 		h.sendPrompt(chatID, locale.T(lang, "sub.enter_project"), lang)
 
 	case storage.SubTypeIssueUpdates:
-		h.states.Set(userID, "sub_issue", nil)
+		h.states.Set(chatID, userID, "sub_issue", nil)
 		h.sendPrompt(chatID, locale.T(lang, "sub.enter_issue"), lang)
 
 	case storage.SubTypeFilterUpdates:

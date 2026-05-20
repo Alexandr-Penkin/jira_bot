@@ -8,14 +8,23 @@ import (
 
 const stateMaxAge = 15 * time.Minute
 
+// stateKey composes (chatID, userID) so a group chat where two users
+// drive the same conversation flow keeps their FSMs separate. In a
+// private chat chatID==userID for Telegram, so the key collapses to a
+// 1:1 mapping with the pre-migration userID-only key.
+type stateKey struct {
+	ChatID int64
+	UserID int64
+}
+
 // stateStore is the backend the state manager delegates to. The
 // in-memory impl is the default; the Mongo impl (state_mongo.go)
 // persists conversation FSM across restarts and — once telegram-svc
 // runs with more than one replica — across processes.
 type stateStore interface {
-	Set(userID int64, step string, data map[string]string)
-	Get(userID int64) (step string, data map[string]string)
-	Clear(userID int64)
+	Set(chatID, userID int64, step string, data map[string]string)
+	Get(chatID, userID int64) (step string, data map[string]string)
+	Clear(chatID, userID int64)
 	StartCleanup(ctx context.Context)
 }
 
@@ -26,8 +35,8 @@ type userState struct {
 }
 
 // stateManager wraps a stateStore so handler code stays impl-agnostic.
-// 106+ call sites use h.states.{Set,Get,Clear} — preserving the
-// facade means no refactor there.
+// Call sites pass (chatID, userID) — chatID is required so group-chat
+// conversations stay separated per user.
 type stateManager struct {
 	store stateStore
 }
@@ -41,24 +50,24 @@ func newStateManagerWithStore(store stateStore) *stateManager {
 }
 
 func (sm *stateManager) StartCleanup(ctx context.Context) { sm.store.StartCleanup(ctx) }
-func (sm *stateManager) Set(userID int64, step string, data map[string]string) {
-	sm.store.Set(userID, step, data)
+func (sm *stateManager) Set(chatID, userID int64, step string, data map[string]string) {
+	sm.store.Set(chatID, userID, step, data)
 }
-func (sm *stateManager) Get(userID int64) (step string, data map[string]string) {
-	return sm.store.Get(userID)
+func (sm *stateManager) Get(chatID, userID int64) (step string, data map[string]string) {
+	return sm.store.Get(chatID, userID)
 }
-func (sm *stateManager) Clear(userID int64) { sm.store.Clear(userID) }
+func (sm *stateManager) Clear(chatID, userID int64) { sm.store.Clear(chatID, userID) }
 
 // memoryStateStore is the original in-process map. Values expire
 // after stateMaxAge; a periodic goroutine started by StartCleanup
 // evicts stale entries.
 type memoryStateStore struct {
 	mu     sync.RWMutex
-	states map[int64]*userState
+	states map[stateKey]*userState
 }
 
 func newMemoryStateStore() *memoryStateStore {
-	return &memoryStateStore{states: make(map[int64]*userState)}
+	return &memoryStateStore{states: make(map[stateKey]*userState)}
 }
 
 func (s *memoryStateStore) StartCleanup(ctx context.Context) {
@@ -88,16 +97,16 @@ func (s *memoryStateStore) cleanExpired() {
 	}
 }
 
-func (s *memoryStateStore) Set(userID int64, step string, data map[string]string) {
+func (s *memoryStateStore) Set(chatID, userID int64, step string, data map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.states[userID] = &userState{step: step, data: data, createdAt: time.Now()}
+	s.states[stateKey{ChatID: chatID, UserID: userID}] = &userState{step: step, data: data, createdAt: time.Now()}
 }
 
-func (s *memoryStateStore) Get(userID int64) (step string, data map[string]string) {
+func (s *memoryStateStore) Get(chatID, userID int64) (step string, data map[string]string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	st, ok := s.states[userID]
+	st, ok := s.states[stateKey{ChatID: chatID, UserID: userID}]
 	if !ok {
 		return "", nil
 	}
@@ -114,8 +123,8 @@ func (s *memoryStateStore) Get(userID int64) (step string, data map[string]strin
 	return st.step, dataCopy
 }
 
-func (s *memoryStateStore) Clear(userID int64) {
+func (s *memoryStateStore) Clear(chatID, userID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.states, userID)
+	delete(s.states, stateKey{ChatID: chatID, UserID: userID})
 }

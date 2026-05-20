@@ -307,7 +307,10 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 
 			// If already accumulating changes for this issue+chat, just merge.
 			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
-			if _, inPending := p.pending[pendingKey]; inPending {
+			p.mu.RLock()
+			_, inPending := p.pending[pendingKey]
+			p.mu.RUnlock()
+			if inPending {
 				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
 				passedToPending++
 				p.emitChangeDetected(ctx, sub, issue)
@@ -468,6 +471,9 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 		return
 	}
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	pn, exists := p.pending[key]
 	if !exists {
 		pn = &pendingNotification{
@@ -515,15 +521,26 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 }
 
 // flushPending sends notifications for issues that have been pending
-// longer than batchWindow (no more changes expected).
+// longer than batchWindow (no more changes expected). The pending map
+// is mutated by addPending in the same poll loop and read by Status()
+// from the admin path — collect ready entries under the lock, send
+// outside it so a slow Telegram send does not stall Status().
 func (p *Poller) flushPending(ctx context.Context) {
 	now := time.Now()
+
+	p.mu.Lock()
+	ready := make([]*pendingNotification, 0, len(p.pending))
 	for key, pn := range p.pending {
 		if now.Sub(pn.firstSeen) < p.batchWindow {
 			continue
 		}
-		p.sendPendingNotification(ctx, pn)
+		ready = append(ready, pn)
 		delete(p.pending, key)
+	}
+	p.mu.Unlock()
+
+	for _, pn := range ready {
+		p.sendPendingNotification(ctx, pn)
 	}
 }
 
@@ -534,9 +551,17 @@ func (p *Poller) flushPending(ctx context.Context) {
 func (p *Poller) flushAllPending() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	p.mu.Lock()
+	ready := make([]*pendingNotification, 0, len(p.pending))
 	for key, pn := range p.pending {
-		p.sendPendingNotification(ctx, pn)
+		ready = append(ready, pn)
 		delete(p.pending, key)
+	}
+	p.mu.Unlock()
+
+	for _, pn := range ready {
+		p.sendPendingNotification(ctx, pn)
 	}
 }
 

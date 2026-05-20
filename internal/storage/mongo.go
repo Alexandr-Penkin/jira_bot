@@ -135,9 +135,15 @@ func ensureIndexes(ctx context.Context, db *mongo.Database, log zerolog.Logger) 
 			},
 		},
 		{
+			// TTL: Mongo prunes the doc once expires_at is in the past.
+			// Webhooks are recreated by the refresher before this fires
+			// in the happy path; the index guarantees abandoned rows
+			// (user disconnected, refresher offline for days) clean up
+			// instead of accumulating forever.
 			collection: "webhook_registrations",
 			model: mongo.IndexModel{
-				Keys: bson.D{{Key: "expires_at", Value: 1}},
+				Keys:    bson.D{{Key: "expires_at", Value: 1}},
+				Options: options.Index().SetExpireAfterSeconds(0),
 			},
 		},
 	}
@@ -155,6 +161,12 @@ func ensureIndexes(ctx context.Context, db *mongo.Database, log zerolog.Logger) 
 
 func (m *MongoDB) Database() *mongo.Database {
 	return m.db
+}
+
+// Ping issues a primary-readPreference ping. Used by readiness probes so
+// a *-svc pod whose Mongo lost the primary stops receiving traffic.
+func (m *MongoDB) Ping(ctx context.Context) error {
+	return m.client.Ping(ctx, readpref.Primary())
 }
 
 func (m *MongoDB) Disconnect(ctx context.Context) error {

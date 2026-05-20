@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"os"
@@ -89,17 +88,14 @@ func main() {
 		_ = mongo.Disconnect(disconnectCtx)
 	}()
 
-	encKeyBytes, err := hex.DecodeString(cfg.EncryptionKey)
-	if err != nil {
-		log.Error().Err(err).Msg("ENCRYPTION_KEY must be a valid hex string (64 hex chars = 32 bytes)")
-		cancel()
-		return
-	}
-	enc, err := crypto.NewEncryptor(encKeyBytes)
+	enc, err := crypto.NewEncryptorFromHex(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create encryptor")
 		cancel()
 		return
+	}
+	if cfg.EncryptionKeyPrevious != "" {
+		log.Info().Msg("crypto: ENCRYPTION_KEY_PREVIOUS registered as fallback for legacy ciphertexts")
 	}
 
 	userRepo := storage.NewUserRepo(mongo.Database(), enc)
@@ -288,7 +284,7 @@ func main() {
 	issuePoller.SetEventPublisher(eventPub)
 	bot.SetPollerRef(issuePoller)
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, telegramNotifier, cfg.JiraWebhookSecret, log, dedup)
+	webhookHandler := webhook.NewHandler(subRepo, userRepo, telegramNotifier, cfg.JiraWebhookSecret, cfg.AllowUnsignedWebhooks, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)
 	bot.SetWebhookStats(webhookRepo, webhookHandler.EventsReceived)
 

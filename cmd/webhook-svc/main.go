@@ -12,7 +12,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"os"
@@ -35,6 +34,7 @@ import (
 	"SleepJiraBot/internal/storage"
 	"SleepJiraBot/internal/webhook"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
@@ -54,6 +54,12 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		panic("failed to load config: " + err.Error())
+	}
+	// webhook-svc is always the webhook ingress; require explicit
+	// authentication configuration here too, since config.Load only
+	// enforces it for the embedded monolith path.
+	if err := cfg.ValidateWebhookAuth(); err != nil {
+		panic("webhook-svc: " + err.Error())
 	}
 
 	log := logger.New(cfg.LogLevel).With().Str("svc", "webhook-svc").Logger()
@@ -99,12 +105,7 @@ func main() {
 		_ = mongo.Disconnect(disconnectCtx)
 	}()
 
-	encKeyBytes, err := hex.DecodeString(cfg.EncryptionKey)
-	if err != nil {
-		log.Error().Err(err).Msg("ENCRYPTION_KEY must be a valid hex string (64 hex chars = 32 bytes)")
-		return
-	}
-	enc, err := crypto.NewEncryptor(encKeyBytes)
+	enc, err := crypto.NewEncryptorFromHex(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create encryptor")
 		return
@@ -120,6 +121,7 @@ func main() {
 		log.Warn().Msg("ENABLE_EVENT_PUBLISH is false; webhook-svc still runs but downstream consumers will not see events")
 	}
 	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
+	var natsPub *natsx.JetStreamPublisher
 	if cfg.EnableEventPublish {
 		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
 		if err != nil {
@@ -132,6 +134,7 @@ func main() {
 			return
 		}
 		eventPub = jsPub
+		natsPub = jsPub
 		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
 		defer func() { _ = jsPub.Close() }()
 	}
@@ -224,7 +227,7 @@ func main() {
 		dedup = memDedup
 	}
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, sendNotifier, cfg.JiraWebhookSecret, log, dedup)
+	webhookHandler := webhook.NewHandler(subRepo, userRepo, sendNotifier, cfg.JiraWebhookSecret, cfg.AllowUnsignedWebhooks, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)
 
 	mux := http.NewServeMux()
@@ -233,6 +236,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.Handle("/readyz", health.Readiness(buildReadinessProbes(mongo, natsPub)...))
 
 	srv := &http.Server{
 		Addr:              cfg.WebhookSvcAddr,
@@ -299,4 +303,18 @@ func runWebhookRefresher(ctx context.Context, mgr *jira.WebhookManager, log zero
 			mgr.RefreshExpiring(ctx, time.Now().Add(webhookRefreshLeadTime))
 		}
 	}
+}
+
+func buildReadinessProbes(mongo *storage.MongoDB, natsPub *natsx.JetStreamPublisher) []health.Probe {
+	probes := []health.Probe{{
+		Name:  "mongo",
+		Check: mongo.Ping,
+	}}
+	if natsPub != nil {
+		probes = append(probes, health.Probe{
+			Name:  "nats",
+			Check: func(_ context.Context) error { return natsPub.Healthy() },
+		})
+	}
+	return probes
 }

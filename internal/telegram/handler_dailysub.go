@@ -98,10 +98,10 @@ func (h *Handler) handleDailySubCallback(ctx context.Context, cq *tgbotapi.Callb
 			h.dailySubSave(ctx, chatID, userID, lang, tail)
 		}
 	case "dailysub_custom":
-		h.states.Set(userID, dailySubStateCustom, nil)
+		h.states.Set(chatID, userID, dailySubStateCustom, nil)
 		h.sendPrompt(chatID, locale.T(lang, "daily_sub.enter_time"), lang)
 	case "dailysub_tz":
-		h.states.Set(userID, dailySubStateTZ, nil)
+		h.states.Set(chatID, userID, dailySubStateTZ, nil)
 		h.sendPrompt(chatID, locale.T(lang, "daily_sub.enter_timezone"), lang)
 	case "dailysub_off":
 		if err := h.scheduleRepo.DeleteDaily(ctx, chatID, userID); err != nil {
@@ -119,7 +119,7 @@ func (h *Handler) handleDailySubCallback(ctx context.Context, cq *tgbotapi.Callb
 // handleDailySubTimeInput consumes the HH:MM the user typed after tapping
 // "Custom time".
 func (h *Handler) handleDailySubTimeInput(ctx context.Context, chatID, userID int64, lang locale.Lang, text string) {
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 	h.dailySubSave(ctx, chatID, userID, lang, text)
 }
 
@@ -128,7 +128,7 @@ func (h *Handler) handleDailySubTimeInput(ctx context.Context, chatID, userID in
 // fire uses it) or, if none exists yet, just records the preference and
 // re-opens the menu so the user can pick a time.
 func (h *Handler) handleDailySubTZInput(ctx context.Context, chatID, userID int64, lang locale.Lang, text string) {
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	tz := strings.TrimSpace(text)
 	if tz == "" || len(tz) > dailySubMaxTZLen {
@@ -153,7 +153,7 @@ func (h *Handler) handleDailySubTZInput(ctx context.Context, chatID, userID int6
 		// preset or sends a custom time. Simplest option: re-open the menu
 		// with the TZ applied. We encode the chosen TZ in FSM data so the
 		// next time save reads it back.
-		h.states.Set(userID, "dailysub_tz_pending", map[string]string{"tz": tz})
+		h.states.Set(chatID, userID, "dailysub_tz_pending", map[string]string{"tz": tz})
 		h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "daily_sub.tz_saved")))
 		h.handleDailySubMenu(ctx, chatID, userID)
 		return
@@ -191,11 +191,11 @@ func (h *Handler) dailySubSave(ctx context.Context, chatID, userID int64, lang l
 		tz = existing.Timezone
 	}
 
-	if step, data := h.states.Get(userID); step == "dailysub_tz_pending" {
+	if step, data := h.states.Get(chatID, userID); step == "dailysub_tz_pending" {
 		if pending := data["tz"]; pending != "" {
 			tz = pending
 		}
-		h.states.Clear(userID)
+		h.states.Clear(chatID, userID)
 	}
 
 	hh, mm := hhmm[0], hhmm[1]

@@ -20,7 +20,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"os"
@@ -40,6 +39,7 @@ import (
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/telemetry"
 )
@@ -99,12 +99,7 @@ func main() {
 		_ = mongo.Disconnect(disconnectCtx)
 	}()
 
-	encKeyBytes, err := hex.DecodeString(cfg.EncryptionKey)
-	if err != nil {
-		log.Error().Err(err).Msg("ENCRYPTION_KEY must be a valid hex string (64 hex chars = 32 bytes)")
-		return
-	}
-	enc, err := crypto.NewEncryptor(encKeyBytes)
+	enc, err := crypto.NewEncryptorFromHex(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create encryptor")
 		return
@@ -117,6 +112,7 @@ func main() {
 	// emitted from whichever process actually refreshes. Enable it by
 	// default when NATS is configured.
 	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
+	var natsPub *natsx.JetStreamPublisher
 	if cfg.EnableEventPublish {
 		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
 		if err != nil {
@@ -129,6 +125,7 @@ func main() {
 			return
 		}
 		eventPub = jsPub
+		natsPub = jsPub
 		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
 		defer func() { _ = jsPub.Close() }()
 	}
@@ -152,9 +149,19 @@ func main() {
 	provider.SetEventPublisher(eventPub)
 	server := identity.NewServer(provider, cfg.InternalAuthToken, log)
 
+	// Compose health endpoints onto the lease API mux so /healthz +
+	// /readyz live on the same listener as the rest of identity-svc.
+	rootMux := http.NewServeMux()
+	rootMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	rootMux.Handle("/readyz", health.Readiness(buildReadinessProbes(mongo, natsPub)...))
+	rootMux.Handle("/", server.Handler())
+
 	srv := &http.Server{
 		Addr:              cfg.InternalAddr,
-		Handler:           otelhttp.NewHandler(server.Handler(), "identity-svc"),
+		Handler:           otelhttp.NewHandler(rootMux, "identity-svc"),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -179,4 +186,18 @@ func main() {
 
 	wg.Wait()
 	log.Info().Msg("identity-svc stopped")
+}
+
+func buildReadinessProbes(mongo *storage.MongoDB, natsPub *natsx.JetStreamPublisher) []health.Probe {
+	probes := []health.Probe{{
+		Name:  "mongo",
+		Check: mongo.Ping,
+	}}
+	if natsPub != nil {
+		probes = append(probes, health.Probe{
+			Name:  "nats",
+			Check: func(_ context.Context) error { return natsPub.Healthy() },
+		})
+	}
+	return probes
 }

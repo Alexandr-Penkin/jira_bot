@@ -58,7 +58,7 @@ func (h *Handler) handleSprintFull(ctx context.Context, chatID, userID int64, pr
 
 	// Board matched, but multiple candidates — show selection.
 	if boardID == -1 {
-		h.states.Set(userID, "sprint_board", map[string]string{"project": projectKey})
+		h.states.Set(chatID, userID, "sprint_board", map[string]string{"project": projectKey})
 
 		matched := filterBoards(boards, boardHint)
 		rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(matched))
@@ -169,7 +169,7 @@ func (h *Handler) handleSprintBoardWithHint(ctx context.Context, chatID, userID 
 	}
 
 	if len(matched) > 1 {
-		h.states.Set(userID, "sprint_sprint", map[string]string{"board_id": strconv.Itoa(boardID)})
+		h.states.Set(chatID, userID, "sprint_sprint", map[string]string{"board_id": strconv.Itoa(boardID)})
 
 		if len(matched) > sprintListLimit {
 			matched = matched[:sprintListLimit]
@@ -218,7 +218,7 @@ func (h *Handler) handleSprintProject(ctx context.Context, chatID, userID int64,
 		return h.handleSprintBoard(ctx, chatID, userID, boards[0].ID)
 	}
 
-	h.states.Set(userID, "sprint_board", map[string]string{"project": projectKey})
+	h.states.Set(chatID, userID, "sprint_board", map[string]string{"project": projectKey})
 
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(boards))
 	for _, b := range boards {
@@ -252,7 +252,7 @@ func (h *Handler) handleSprintBoard(ctx context.Context, chatID, userID int64, b
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "sprint.no_sprints"))
 	}
 
-	h.states.Set(userID, "sprint_sprint", map[string]string{"board_id": strconv.Itoa(boardID)})
+	h.states.Set(chatID, userID, "sprint_sprint", map[string]string{"board_id": strconv.Itoa(boardID)})
 
 	if len(sprints) > sprintListLimit {
 		sprints = sprints[:sprintListLimit]
@@ -1290,7 +1290,7 @@ func (h *Handler) handleSprintCallback(ctx context.Context, cq *tgbotapi.Callbac
 		return
 	}
 
-	h.states.Clear(userID)
+	h.states.Clear(chatID, userID)
 
 	var msg tgbotapi.MessageConfig
 	switch parts[0] {

@@ -7,25 +7,40 @@ import (
 )
 
 type Config struct {
-	TelegramToken     string
-	MongoURI          string
-	MongoDB           string
-	LogLevel          string
-	JiraClientID      string
-	JiraClientSecret  string
-	JiraRedirectURI   string
-	PollInterval      string
-	BatchWindow       string
-	CallbackAddr      string
-	EncryptionKey     string
-	JiraWebhookSecret string
+	TelegramToken    string
+	MongoURI         string
+	MongoDB          string
+	LogLevel         string
+	JiraClientID     string
+	JiraClientSecret string
+	JiraRedirectURI  string
+	PollInterval     string
+	BatchWindow      string
+	CallbackAddr     string
+	EncryptionKey    string
+	// EncryptionKeyPrevious is an optional 32-byte hex secondary key
+	// the encryptor falls back to on Decrypt. Use during ENCRYPTION_KEY
+	// rotation: deploy with the new key as primary and the old one as
+	// previous; remove the env var once the next batch write has
+	// re-encrypted every record (or after the affected collection's
+	// retention window passes).
+	EncryptionKeyPrevious string
+	JiraWebhookSecret     string
 	// JiraWebhookURL is the public HTTPS endpoint Jira posts events to.
 	// Passed in the body of POST /rest/api/3/webhook — Atlassian rejects
 	// registrations whose host does not match the OAuth app's configured
 	// base URL.
-	JiraWebhookURL  string
-	AdminTelegramID int64
-	ProxyURL        string
+	JiraWebhookURL string
+	// AllowUnsignedWebhooks must be explicitly set to true when
+	// JiraWebhookSecret is empty — otherwise the webhook handler
+	// rejects every POST. Default false so a deploy without a
+	// configured secret fails closed instead of silently accepting
+	// forged events. Set ALLOW_UNSIGNED_WEBHOOKS=true only when the
+	// /webhook URL is genuinely protected by other means (network
+	// ACL, reverse-proxy auth, etc.).
+	AllowUnsignedWebhooks bool
+	AdminTelegramID       int64
+	ProxyURL              string
 
 	// Phase 0 of DDD microservices split: event bus alongside the monolith.
 	// NatsURL is consulted only when EnableEventPublish is true.
@@ -136,35 +151,36 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		TelegramToken:        os.Getenv("TELEGRAM_TOKEN"),
-		MongoURI:             getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017"),
-		MongoDB:              getEnvOrDefault("MONGO_DB", "sleepjirabot"),
-		LogLevel:             getEnvOrDefault("LOG_LEVEL", "info"),
-		JiraClientID:         os.Getenv("JIRA_CLIENT_ID"),
-		JiraClientSecret:     os.Getenv("JIRA_CLIENT_SECRET"),
-		JiraRedirectURI:      getEnvOrDefault("JIRA_REDIRECT_URI", "http://localhost:8080/callback"),
-		PollInterval:         getEnvOrDefault("POLL_INTERVAL", "30s"),
-		BatchWindow:          getEnvOrDefault("BATCH_WINDOW", "1m"),
-		CallbackAddr:         getEnvOrDefault("CALLBACK_ADDR", ":8080"),
-		EncryptionKey:        os.Getenv("ENCRYPTION_KEY"),
-		JiraWebhookSecret:    os.Getenv("JIRA_WEBHOOK_SECRET"),
-		JiraWebhookURL:       os.Getenv("JIRA_WEBHOOK_URL"),
-		ProxyURL:             os.Getenv("PROXY_URL"),
-		NatsURL:              getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
-		EmbedWebhookServer:   true,
-		WebhookSvcAddr:       getEnvOrDefault("WEBHOOK_SVC_ADDR", ":8081"),
-		InternalAddr:         getEnvOrDefault("INTERNAL_ADDR", ":9080"),
-		InternalAuthToken:    os.Getenv("INTERNAL_AUTH_TOKEN"),
-		IdentitySvcURL:       os.Getenv("IDENTITY_SVC_URL"),
-		EmbedPoller:          true,
-		EmbedScheduler:       true,
-		EmbedPreferences:     true,
-		EmbedTelegramUpdates: true,
-		PreferencesSvcURL:    os.Getenv("PREFERENCES_SVC_URL"),
-		PreferencesSvcAddr:   getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
-		DedupRedisURL:        os.Getenv("DEDUP_REDIS_URL"),
-		OtelExporterEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		OtelServiceName:      os.Getenv("OTEL_SERVICE_NAME"),
+		TelegramToken:         os.Getenv("TELEGRAM_TOKEN"),
+		MongoURI:              getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017"),
+		MongoDB:               getEnvOrDefault("MONGO_DB", "sleepjirabot"),
+		LogLevel:              getEnvOrDefault("LOG_LEVEL", "info"),
+		JiraClientID:          os.Getenv("JIRA_CLIENT_ID"),
+		JiraClientSecret:      os.Getenv("JIRA_CLIENT_SECRET"),
+		JiraRedirectURI:       getEnvOrDefault("JIRA_REDIRECT_URI", "http://localhost:8080/callback"),
+		PollInterval:          getEnvOrDefault("POLL_INTERVAL", "30s"),
+		BatchWindow:           getEnvOrDefault("BATCH_WINDOW", "1m"),
+		CallbackAddr:          getEnvOrDefault("CALLBACK_ADDR", ":8080"),
+		EncryptionKey:         os.Getenv("ENCRYPTION_KEY"),
+		EncryptionKeyPrevious: os.Getenv("ENCRYPTION_KEY_PREVIOUS"),
+		JiraWebhookSecret:     os.Getenv("JIRA_WEBHOOK_SECRET"),
+		JiraWebhookURL:        os.Getenv("JIRA_WEBHOOK_URL"),
+		ProxyURL:              os.Getenv("PROXY_URL"),
+		NatsURL:               getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
+		EmbedWebhookServer:    true,
+		WebhookSvcAddr:        getEnvOrDefault("WEBHOOK_SVC_ADDR", ":8081"),
+		InternalAddr:          getEnvOrDefault("INTERNAL_ADDR", ":9080"),
+		InternalAuthToken:     os.Getenv("INTERNAL_AUTH_TOKEN"),
+		IdentitySvcURL:        os.Getenv("IDENTITY_SVC_URL"),
+		EmbedPoller:           true,
+		EmbedScheduler:        true,
+		EmbedPreferences:      true,
+		EmbedTelegramUpdates:  true,
+		PreferencesSvcURL:     os.Getenv("PREFERENCES_SVC_URL"),
+		PreferencesSvcAddr:    getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
+		DedupRedisURL:         os.Getenv("DEDUP_REDIS_URL"),
+		OtelExporterEndpoint:  os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OtelServiceName:       os.Getenv("OTEL_SERVICE_NAME"),
 	}
 
 	if v := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); v != "" {
@@ -249,6 +265,14 @@ func Load() (*Config, error) {
 		cfg.TelegramSvcUpdates = enabled
 	}
 
+	if v := os.Getenv("ALLOW_UNSIGNED_WEBHOOKS"); v != "" {
+		allow, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("ALLOW_UNSIGNED_WEBHOOKS must be a boolean (true/false/1/0)")
+		}
+		cfg.AllowUnsignedWebhooks = allow
+	}
+
 	if cfg.TelegramToken == "" {
 		return nil, errors.New("TELEGRAM_TOKEN is required")
 	}
@@ -267,13 +291,24 @@ func Load() (*Config, error) {
 	if len(cfg.EncryptionKey) != 64 {
 		return nil, errors.New("ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)")
 	}
+	if cfg.EncryptionKeyPrevious != "" && len(cfg.EncryptionKeyPrevious) != 64 {
+		return nil, errors.New("ENCRYPTION_KEY_PREVIOUS must be exactly 64 hex characters (32 bytes) when set")
+	}
 
-	// JIRA_WEBHOOK_SECRET is optional: Jira Cloud's dynamic-webhook
-	// registration API (POST /rest/api/3/webhook) does not expose a
-	// per-webhook signing-secret field, so payloads arrive unsigned by
-	// default. When the secret is set, the webhook handler will verify
-	// X-Hub-Signature; when empty, verification is skipped and the URL
-	// should be protected by obscurity / reverse-proxy auth.
+	// JIRA_WEBHOOK_SECRET is optional in the sense that Jira Cloud's
+	// dynamic-webhook registration API does not expose a signing-secret
+	// field — operators wire it in out-of-band (e.g. through a Connect
+	// app or reverse-proxy hook). When empty, the webhook handler
+	// rejects every POST unless ALLOW_UNSIGNED_WEBHOOKS=true is set, so
+	// a misconfigured deploy fails closed instead of accepting forged
+	// events. The monolith only owns webhook ingress when
+	// EmbedWebhookServer is true; webhook-svc binaries must run the
+	// same check themselves via ValidateWebhookAuth().
+	if cfg.EmbedWebhookServer {
+		if err := cfg.ValidateWebhookAuth(); err != nil {
+			return nil, err
+		}
+	}
 
 	if v := os.Getenv("ADMIN_TELEGRAM_ID"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -291,4 +326,15 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// ValidateWebhookAuth ensures the webhook endpoint has some form of
+// authentication configured. Called once at startup by every binary
+// that serves /webhook (monolith via Load when EmbedWebhookServer is
+// true, webhook-svc directly).
+func (c *Config) ValidateWebhookAuth() error {
+	if c.JiraWebhookSecret == "" && !c.AllowUnsignedWebhooks {
+		return errors.New("JIRA_WEBHOOK_SECRET is empty and ALLOW_UNSIGNED_WEBHOOKS=true was not set; refusing to expose /webhook with unauthenticated ingress")
+	}
+	return nil
 }
