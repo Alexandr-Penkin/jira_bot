@@ -61,7 +61,11 @@ func (h *Handler) handleAdminStats(ctx context.Context, chatID int64, lang local
 
 	var webhookCount int64
 	if h.webhookRepo != nil {
-		webhookCount, _ = h.webhookRepo.CountAll(ctx)
+		var err error
+		webhookCount, err = h.webhookRepo.CountAll(ctx)
+		if err != nil {
+			h.log.Error().Err(err).Msg("admin stats: failed to count webhook registrations")
+		}
 	}
 	var webhookEvents int64
 	if h.webhookEvents != nil {

@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -237,6 +238,7 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("/readyz", health.Readiness(buildReadinessProbes(mongo, natsPub)...))
+	mux.Handle("/internal/stats", newStatsHandler(webhookHandler, webhookRepo, cfg.InternalAuthToken, log))
 
 	srv := &http.Server{
 		Addr:              cfg.WebhookSvcAddr,
@@ -303,6 +305,38 @@ func runWebhookRefresher(ctx context.Context, mgr *jira.WebhookManager, log zero
 			mgr.RefreshExpiring(ctx, time.Now().Add(webhookRefreshLeadTime))
 		}
 	}
+}
+
+// newStatsHandler returns an admin-only JSON endpoint with the in-process
+// webhook event counter and the persisted webhook-registration count.
+// Authenticates with INTERNAL_AUTH_TOKEN (Bearer) when configured; when
+// empty, the listener is assumed to be network-protected and any caller
+// is allowed — matching the identity-svc lease endpoint policy.
+func newStatsHandler(wh *webhook.Handler, repo *storage.WebhookRepo, authToken string, log zerolog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if authToken != "" {
+			header := r.Header.Get("Authorization")
+			if header != "Bearer "+authToken {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		var webhookCount int64
+		if repo != nil {
+			n, err := repo.CountAll(r.Context())
+			if err != nil {
+				log.Warn().Err(err).Msg("internal/stats: failed to count webhook registrations")
+			} else {
+				webhookCount = n
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"events_received":%d,"webhook_count":%d}`, wh.EventsReceived(), webhookCount)
+	})
 }
 
 func buildReadinessProbes(mongo *storage.MongoDB, natsPub *natsx.JetStreamPublisher) []health.Probe {

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -286,7 +290,12 @@ func main() {
 
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, telegramNotifier, cfg.JiraWebhookSecret, cfg.AllowUnsignedWebhooks, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)
-	bot.SetWebhookStats(webhookRepo, webhookHandler.EventsReceived)
+	eventsFn := webhookHandler.EventsReceived
+	if !cfg.EmbedWebhookServer && cfg.WebhookSvcURL != "" {
+		eventsFn = newRemoteWebhookStatsFetcher(cfg.WebhookSvcURL, cfg.InternalAuthToken, httpClient, log)
+		log.Info().Str("url", cfg.WebhookSvcURL).Msg("admin stats: events_received sourced from webhook-svc")
+	}
+	bot.SetWebhookStats(webhookRepo, eventsFn)
 
 	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, subRepo, webhookMgr, bot.API(), log)
 	callbackServer.SetEventPublisher(eventPub)
@@ -410,6 +419,64 @@ const (
 	// daily run does not let webhooks lapse.
 	webhookRefreshLeadTime = 7 * 24 * time.Hour
 )
+
+// newRemoteWebhookStatsFetcher returns a closure that fetches the
+// in-process webhook event counter from a remote webhook-svc. Used by
+// admin stats when the monolith does not embed the webhook server
+// (EMBED_WEBHOOK_SERVER=false). Caches the last successful value for
+// 5s so /admin stats does not spam the service. On error returns the
+// last good value (or 0 if none) so a transient outage shows as a
+// stale counter rather than swinging to zero.
+func newRemoteWebhookStatsFetcher(baseURL, authToken string, httpClient *http.Client, log zerolog.Logger) func() int64 {
+	base := strings.TrimRight(baseURL, "/") + "/internal/stats"
+	const cacheTTL = 5 * time.Second
+	var (
+		mu       sync.Mutex
+		cachedAt time.Time
+	)
+	var cached atomic.Int64
+	return func() int64 {
+		mu.Lock()
+		if time.Since(cachedAt) < cacheTTL {
+			mu.Unlock()
+			return cached.Load()
+		}
+		mu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base, http.NoBody)
+		if err != nil {
+			log.Debug().Err(err).Msg("admin stats: build webhook-svc request")
+			return cached.Load()
+		}
+		if authToken != "" {
+			req.Header.Set("Authorization", "Bearer "+authToken)
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			log.Debug().Err(err).Str("url", base).Msg("admin stats: webhook-svc fetch failed")
+			return cached.Load()
+		}
+		defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+		if resp.StatusCode >= 400 {
+			log.Debug().Int("status", resp.StatusCode).Str("url", base).Msg("admin stats: webhook-svc non-2xx")
+			return cached.Load()
+		}
+		var payload struct {
+			EventsReceived int64 `json:"events_received"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&payload); err != nil {
+			log.Debug().Err(err).Msg("admin stats: decode webhook-svc response")
+			return cached.Load()
+		}
+		mu.Lock()
+		cachedAt = time.Now()
+		mu.Unlock()
+		cached.Store(payload.EventsReceived)
+		return payload.EventsReceived
+	}
+}
 
 func runWebhookRefresher(ctx context.Context, mgr *jira.WebhookManager, log zerolog.Logger) {
 	if mgr == nil {

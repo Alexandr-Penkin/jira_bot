@@ -57,6 +57,12 @@ type Config struct {
 	// WebhookSvcAddr is consulted only by cmd/webhook-svc.
 	WebhookSvcAddr string
 
+	// WebhookSvcURL, when set on the monolith, points admin stats at the
+	// standalone webhook-svc /internal/stats endpoint so the in-process
+	// counter (which stays zero when EmbedWebhookServer is false) is
+	// replaced with the real value. Authenticated with InternalAuthToken.
+	WebhookSvcURL string
+
 	// Phase 2: identity-svc TokenLease protocol. InternalAddr is the
 	// listener for /internal/lease (kept separate from the public
 	// callback server so the lease endpoint is not exposed to Jira
@@ -169,6 +175,7 @@ func Load() (*Config, error) {
 		NatsURL:               getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
 		EmbedWebhookServer:    true,
 		WebhookSvcAddr:        getEnvOrDefault("WEBHOOK_SVC_ADDR", ":8081"),
+		WebhookSvcURL:         os.Getenv("WEBHOOK_SVC_URL"),
 		InternalAddr:          getEnvOrDefault("INTERNAL_ADDR", ":9080"),
 		InternalAuthToken:     os.Getenv("INTERNAL_AUTH_TOKEN"),
 		IdentitySvcURL:        os.Getenv("IDENTITY_SVC_URL"),
