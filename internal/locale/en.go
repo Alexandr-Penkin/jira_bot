@@ -469,6 +469,14 @@ var en = map[string]string{
 	"admin.diagnose.webhooks_entry":      "`%d` — expires %s\n   Events: %s\n   JQL: `%s`",
 	"admin.diagnose.webhooks_truncated":  "… and %d more (showing first 10)",
 
+	"admin.webhooks_resync.usage":     "Usage: `/webhooks_resync [telegram_user_id]`\nNo arg = resync your own webhooks.",
+	"admin.webhooks_resync.header":    "*🔁 Webhook resync — `%d`*",
+	"admin.webhooks_resync.failed":    "❌ Resync failed: %s",
+	"admin.webhooks_resync.summary":   "Before: Jira `%d`, DB `%d`\nAdopted: `%d`, dropped local: `%d`, unmatched: `%d`",
+	"admin.webhooks_resync.adopted":   "✅ Adopted into DB (matched to subscriptions): `%s`",
+	"admin.webhooks_resync.dropped":   "🗑 Dropped local rows (Jira no longer has them): `%s`",
+	"admin.webhooks_resync.unmatched": "⚠️ In Jira but no matching active subscription: `%s` — orphans. Delete via Jira API or recreate the matching subscriptions.",
+
 	// Create issue
 	"create.usage":                "Usage: `/create PROJECT Type | Summary | Description`\nOr just `/create` for the wizard.",
 	"create.enter_project":        "Enter project key (e.g. PROJ):",

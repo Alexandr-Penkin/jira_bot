@@ -334,6 +334,66 @@ func formatWebhookIDs(ids []int64) string {
 	return strings.Join(parts, ", ")
 }
 
+// handleWebhooksResync reconciles the user's webhook_registrations rows
+// with what Jira actually has. With no arg it resyncs the admin; with a
+// telegram_user_id arg it resyncs that user. Drift typically appears
+// after a /disconnect that could not reach Jira (orphan hooks remain)
+// or a registration whose DB write failed silently.
+func (h *Handler) handleWebhooksResync(ctx context.Context, chatID, adminID int64, args string) tgbotapi.MessageConfig {
+	lang := h.getLang(ctx, adminID)
+
+	if h.webhookMgr == nil || h.subRepo == nil {
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic"))
+	}
+
+	targetID := adminID
+	args = strings.TrimSpace(args)
+	if args != "" {
+		parsed, err := strconv.ParseInt(strings.Fields(args)[0], 10, 64)
+		if err != nil {
+			return tgbotapi.NewMessage(chatID, locale.T(lang, "admin.webhooks_resync.usage"))
+		}
+		targetID = parsed
+	}
+
+	subs, err := h.subRepo.GetActiveByUser(ctx, targetID)
+	if err != nil {
+		h.log.Error().Err(err).Int64("target_id", targetID).Msg("webhooks_resync: failed to load subscriptions")
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.generic"))
+	}
+
+	result, err := h.webhookMgr.ResyncForUser(ctx, targetID, subs)
+	if err != nil {
+		return tgbotapi.NewMessage(chatID,
+			locale.T(lang, "admin.webhooks_resync.failed", format.EscapeMarkdown(err.Error())))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(locale.T(lang, "admin.webhooks_resync.header", targetID))
+	sb.WriteString("\n\n")
+	sb.WriteString(locale.T(lang, "admin.webhooks_resync.summary",
+		result.JiraCount, result.LocalCount,
+		len(result.Adopted), len(result.DroppedLocal), len(result.Unmatched)))
+	sb.WriteString("\n")
+
+	if len(result.Adopted) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(locale.T(lang, "admin.webhooks_resync.adopted", formatWebhookIDs(result.Adopted)))
+	}
+	if len(result.DroppedLocal) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(locale.T(lang, "admin.webhooks_resync.dropped", formatWebhookIDs(result.DroppedLocal)))
+	}
+	if len(result.Unmatched) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(locale.T(lang, "admin.webhooks_resync.unmatched", formatWebhookIDs(result.Unmatched)))
+	}
+
+	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	return msg
+}
+
 // diagnoseMissingScopes returns scopes present in required but absent from
 // the space-separated granted string. Order follows required so the output
 // matches the source-of-truth list in oauth.go.

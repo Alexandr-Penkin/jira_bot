@@ -469,6 +469,14 @@ var ru = map[string]string{
 	"admin.diagnose.webhooks_entry":      "`%d` — истекает %s\n   События: %s\n   JQL: `%s`",
 	"admin.diagnose.webhooks_truncated":  "… и ещё %d (показано первые 10)",
 
+	"admin.webhooks_resync.usage":     "Использование: `/webhooks_resync [telegram_user_id]`\nБез аргумента — пересинхронизировать свои вебхуки.",
+	"admin.webhooks_resync.header":    "*🔁 Пересинхронизация вебхуков — `%d`*",
+	"admin.webhooks_resync.failed":    "❌ Не удалось пересинхронизировать: %s",
+	"admin.webhooks_resync.summary":   "До: Jira `%d`, БД `%d`\nАдоптировано: `%d`, удалено локально: `%d`, без совпадений: `%d`",
+	"admin.webhooks_resync.adopted":   "✅ Адоптированы в БД (сматчены с подписками): `%s`",
+	"admin.webhooks_resync.dropped":   "🗑 Удалены локальные строки (в Jira их уже нет): `%s`",
+	"admin.webhooks_resync.unmatched": "⚠️ В Jira есть, но не сматчены ни с одной активной подпиской: `%s` — это сироты. Удали их через Jira API или удали соответствующие подписки и зарегистрируй заново.",
+
 	// Create issue
 	"create.usage":                "Использование: `/create PROJECT Тип | Заголовок | Описание`\nИли просто `/create` для пошагового создания.",
 	"create.enter_project":        "Введите ключ проекта (например PROJ):",

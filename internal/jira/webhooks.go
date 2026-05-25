@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -187,6 +188,151 @@ func (m *WebhookManager) RegisterForExistingSubscriptions(ctx context.Context, t
 		}
 		m.RegisterForSubscription(ctx, &subs[i])
 	}
+}
+
+// ResyncResult summarises a webhook resync operation: what Jira had vs
+// what local DB had, and how the drift was reconciled.
+type ResyncResult struct {
+	JiraCount    int
+	LocalCount   int
+	Adopted      []int64 // Jira webhook IDs adopted into local DB
+	Unmatched    []int64 // Jira webhook IDs we could not match to any active subscription
+	DroppedLocal []int64 // local webhook IDs deleted (Jira no longer has them)
+}
+
+// ResyncForUser reconciles the Jira-side webhook list with the local
+// webhook_registrations collection. Webhooks Jira knows about but the DB
+// does not are adopted by matching jqlFilter to one of the user's active
+// subscriptions; webhooks the DB has but Jira does not are dropped (Jira
+// already lost them — keeping the row would only break a future refresh).
+// Webhooks present in Jira whose JQL does not match any active sub are
+// reported as Unmatched and left alone: deletion is a separate, more
+// destructive action and should stay opt-in.
+func (m *WebhookManager) ResyncForUser(ctx context.Context, telegramUserID int64, activeSubs []storage.Subscription) (*ResyncResult, error) {
+	user, err := m.userRepo.GetByTelegramID(ctx, telegramUserID)
+	if err != nil {
+		return nil, fmt.Errorf("load user: %w", err)
+	}
+	if user == nil || user.AccessToken == "" {
+		return nil, errors.New("user is not connected to Jira")
+	}
+
+	jiraHooks, err := m.client.ListWebhooks(ctx, user)
+	if err != nil {
+		return nil, fmt.Errorf("list jira webhooks: %w", err)
+	}
+
+	localHooks, err := m.webhookRepo.GetByUser(ctx, telegramUserID)
+	if err != nil {
+		return nil, fmt.Errorf("load local registrations: %w", err)
+	}
+
+	result := &ResyncResult{
+		JiraCount:  len(jiraHooks),
+		LocalCount: len(localHooks),
+	}
+
+	localByID := make(map[int64]storage.WebhookRegistration, len(localHooks))
+	for i := range localHooks {
+		localByID[localHooks[i].WebhookID] = localHooks[i]
+	}
+
+	// Build a JQL → subscription index. Multiple subs producing identical
+	// JQL is unusual but possible (e.g. two my_new_issues subs in different
+	// chats); the first wins and subsequent identical-JQL hooks get
+	// reported as Unmatched so the operator can decide what to do.
+	subByJQL := make(map[string]storage.Subscription)
+	for i := range activeSubs {
+		expected := SanitizeWebhookJQL(SubscriptionWebhookJQL(&activeSubs[i]))
+		if expected == "" {
+			continue
+		}
+		if _, exists := subByJQL[expected]; !exists {
+			subByJQL[expected] = activeSubs[i]
+		}
+	}
+
+	for i := range jiraHooks {
+		wh := &jiraHooks[i]
+		if _, exists := localByID[wh.ID]; exists {
+			continue
+		}
+		sub, ok := subByJQL[wh.JqlFilter]
+		if !ok {
+			result.Unmatched = append(result.Unmatched, wh.ID)
+			continue
+		}
+		expires := parseJiraExpiration(wh.ExpirationDate)
+		reg := &storage.WebhookRegistration{
+			TelegramUserID: telegramUserID,
+			JiraCloudID:    user.JiraCloudID,
+			SubscriptionID: sub.ID,
+			WebhookID:      wh.ID,
+			JqlFilter:      wh.JqlFilter,
+			Events:         wh.Events,
+			ExpiresAt:      expires,
+		}
+		if createErr := m.webhookRepo.Create(ctx, reg); createErr != nil {
+			m.log.Warn().
+				Err(createErr).
+				Int64("user_id", telegramUserID).
+				Int64("webhook_id", wh.ID).
+				Msg("resync: failed to adopt webhook into local DB")
+			continue
+		}
+		// Claim the sub so a second Jira hook with the same JQL is not
+		// adopted against it — multiple rows pointing at the same sub
+		// would confuse DeleteForSubscription downstream.
+		delete(subByJQL, wh.JqlFilter)
+		result.Adopted = append(result.Adopted, wh.ID)
+	}
+
+	jiraIDs := make(map[int64]struct{}, len(jiraHooks))
+	for i := range jiraHooks {
+		jiraIDs[jiraHooks[i].ID] = struct{}{}
+	}
+	for i := range localHooks {
+		if _, ok := jiraIDs[localHooks[i].WebhookID]; ok {
+			continue
+		}
+		if delErr := m.webhookRepo.Delete(ctx, localHooks[i].ID); delErr != nil {
+			m.log.Warn().
+				Err(delErr).
+				Int64("user_id", telegramUserID).
+				Int64("webhook_id", localHooks[i].WebhookID).
+				Msg("resync: failed to drop stale local row")
+			continue
+		}
+		result.DroppedLocal = append(result.DroppedLocal, localHooks[i].WebhookID)
+	}
+
+	return result, nil
+}
+
+// parseJiraExpiration tolerates the two formats Jira returns for
+// expirationDate: a millisecond epoch string, or an ISO-8601 timestamp
+// (sometimes with a colon-less numeric offset like +0300, which is NOT
+// what time.RFC3339 accepts). Unknown shapes fall back to now+30d so the
+// adopted row still has a sensible refresher threshold.
+func parseJiraExpiration(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Now().Add(WebhookLifetime)
+	}
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return time.UnixMilli(ms)
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000-0700",
+		"2006-01-02T15:04:05-0700",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Now().Add(WebhookLifetime)
 }
 
 // DeleteForSubscription removes the Jira webhook(s) tied to a specific

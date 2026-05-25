@@ -272,6 +272,12 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 			return tgbotapi.NewMessage(chatID, locale.T(lang, "admin.not_authorized"))
 		}
 		return h.handleDiagnose(ctx, chatID, userID, args)
+	case "webhooks_resync":
+		lang := h.getLang(ctx, userID)
+		if !h.isAdmin(userID) {
+			return tgbotapi.NewMessage(chatID, locale.T(lang, "admin.not_authorized"))
+		}
+		return h.handleWebhooksResync(ctx, chatID, userID, args)
 	default:
 		lang := h.getLang(ctx, userID)
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "unknown_command"))
