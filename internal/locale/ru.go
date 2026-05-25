@@ -469,6 +469,14 @@ var ru = map[string]string{
 	"admin.diagnose.webhooks_entry":      "`%d` — истекает %s\n   События: %s\n   JQL: `%s`",
 	"admin.diagnose.webhooks_truncated":  "… и ещё %d (показано первые 10)",
 
+	"admin.diagnose.failed_webhooks_header":     "*Неудачные доставки (Jira, ~30 дн.):*",
+	"admin.diagnose.failed_webhooks_jira_fail":  "❌ GET /webhook/failed → %d: %s",
+	"admin.diagnose.failed_webhooks_jira_error": "❌ GET /webhook/failed → %s",
+	"admin.diagnose.failed_webhooks_none":       "✅ В Jira нет записей о неудачных доставках. Если в локальном счётчике 0 — значит Jira ничего не отправляла, JQL хуков не сматчил событие.",
+	"admin.diagnose.failed_webhooks_count":      "⚠️ В Jira записано неудачных доставок: %d",
+	"admin.diagnose.failed_webhooks_entry":      "`%s` — %s\n   URL: `%s`",
+	"admin.diagnose.failed_webhooks_truncated":  "… и ещё %d (показано первые 5, кап %d)",
+
 	"admin.webhooks_resync.usage":     "Использование: `/webhooks_resync [telegram_user_id]`\nБез аргумента — пересинхронизировать свои вебхуки.",
 	"admin.webhooks_resync.header":    "*🔁 Пересинхронизация вебхуков — `%d`*",
 	"admin.webhooks_resync.failed":    "❌ Не удалось пересинхронизировать: %s",

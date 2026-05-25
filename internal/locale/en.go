@@ -469,6 +469,14 @@ var en = map[string]string{
 	"admin.diagnose.webhooks_entry":      "`%d` — expires %s\n   Events: %s\n   JQL: `%s`",
 	"admin.diagnose.webhooks_truncated":  "… and %d more (showing first 10)",
 
+	"admin.diagnose.failed_webhooks_header":     "*Failed deliveries (Jira, ~30d):*",
+	"admin.diagnose.failed_webhooks_jira_fail":  "❌ GET /webhook/failed → %d: %s",
+	"admin.diagnose.failed_webhooks_jira_error": "❌ GET /webhook/failed → %s",
+	"admin.diagnose.failed_webhooks_none":       "✅ Jira recorded no failed deliveries. If the local counter is also 0 — Jira never fired anything; the webhook JQL did not match your event.",
+	"admin.diagnose.failed_webhooks_count":      "⚠️ Jira recorded failed deliveries: %d",
+	"admin.diagnose.failed_webhooks_entry":      "`%s` — %s\n   URL: `%s`",
+	"admin.diagnose.failed_webhooks_truncated":  "… and %d more (showing first 5, cap %d)",
+
 	"admin.webhooks_resync.usage":     "Usage: `/webhooks_resync [telegram_user_id]`\nNo arg = resync your own webhooks.",
 	"admin.webhooks_resync.header":    "*🔁 Webhook resync — `%d`*",
 	"admin.webhooks_resync.failed":    "❌ Resync failed: %s",
