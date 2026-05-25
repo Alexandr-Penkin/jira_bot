@@ -229,14 +229,17 @@ var en = map[string]string{
 	"notif.comment_by":  "Comment by",
 
 	// Poller notifications
-	"notif.updates":    "👤 %s made updates in [%s](%s)",
-	"notif.someone":    "Someone",
-	"notif.summary":    "Summary",
-	"notif.unassigned": "Unassigned",
-	"notif.cleared":    "cleared",
-	"notif.reporter":   "Reporter",
-	"notif.priority":   "Priority",
-	"notif.issue_type": "Type of issue",
+	"notif.updates":             "👤 %s made updates in [%s](%s)",
+	"notif.someone":             "Someone",
+	"notif.summary":             "Summary",
+	"notif.unassigned":          "Unassigned",
+	"notif.cleared":             "cleared",
+	"notif.reporter":            "Reporter",
+	"notif.priority":            "Priority",
+	"notif.issue_type":          "Type of issue",
+	"notif.comment_prefix":      "💬 Comment by",
+	"notif.comment_prefix_anon": "💬 Comment:",
+	"notif.comments_more":       "… and %d more comments in the issue",
 
 	// Daily
 	"btn.daily":             "📝 Daily",
@@ -468,14 +471,6 @@ var en = map[string]string{
 	"admin.diagnose.webhooks_none":       "ℹ️ No dynamic webhooks registered in Jira for this user.",
 	"admin.diagnose.webhooks_entry":      "`%d` — expires %s\n   Events: %s\n   JQL: `%s`",
 	"admin.diagnose.webhooks_truncated":  "… and %d more (showing first 10)",
-
-	"admin.diagnose.failed_webhooks_header":     "*Failed deliveries (Jira, ~30d):*",
-	"admin.diagnose.failed_webhooks_jira_fail":  "❌ GET /webhook/failed → %d: %s",
-	"admin.diagnose.failed_webhooks_jira_error": "❌ GET /webhook/failed → %s",
-	"admin.diagnose.failed_webhooks_none":       "✅ Jira recorded no failed deliveries. If the local counter is also 0 — Jira never fired anything; the webhook JQL did not match your event.",
-	"admin.diagnose.failed_webhooks_count":      "⚠️ Jira recorded failed deliveries: %d",
-	"admin.diagnose.failed_webhooks_entry":      "`%s` — %s\n   URL: `%s`",
-	"admin.diagnose.failed_webhooks_truncated":  "… and %d more (showing first 5, cap %d)",
 
 	"admin.webhooks_resync.usage":     "Usage: `/webhooks_resync [telegram_user_id]`\nNo arg = resync your own webhooks.",
 	"admin.webhooks_resync.header":    "*🔁 Webhook resync — `%d`*",

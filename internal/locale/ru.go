@@ -229,14 +229,17 @@ var ru = map[string]string{
 	"notif.comment_by":  "Комментарий от",
 
 	// Poller notifications
-	"notif.updates":    "👤 %s обновил(а) [%s](%s)",
-	"notif.someone":    "Кто-то",
-	"notif.summary":    "Описание",
-	"notif.unassigned": "Не назначен",
-	"notif.cleared":    "очищено",
-	"notif.reporter":   "Автор",
-	"notif.priority":   "Приоритет",
-	"notif.issue_type": "Тип задачи",
+	"notif.updates":             "👤 %s обновил(а) [%s](%s)",
+	"notif.someone":             "Кто-то",
+	"notif.summary":             "Описание",
+	"notif.unassigned":          "Не назначен",
+	"notif.cleared":             "очищено",
+	"notif.reporter":            "Автор",
+	"notif.priority":            "Приоритет",
+	"notif.issue_type":          "Тип задачи",
+	"notif.comment_prefix":      "💬 Комментарий от",
+	"notif.comment_prefix_anon": "💬 Комментарий:",
+	"notif.comments_more":       "… и ещё %d комментариев в задаче",
 
 	// Daily
 	"btn.daily":             "📝 Daily",
@@ -468,14 +471,6 @@ var ru = map[string]string{
 	"admin.diagnose.webhooks_none":       "ℹ️ В Jira нет зарегистрированных вебхуков для этого пользователя.",
 	"admin.diagnose.webhooks_entry":      "`%d` — истекает %s\n   События: %s\n   JQL: `%s`",
 	"admin.diagnose.webhooks_truncated":  "… и ещё %d (показано первые 10)",
-
-	"admin.diagnose.failed_webhooks_header":     "*Неудачные доставки (Jira, ~30 дн.):*",
-	"admin.diagnose.failed_webhooks_jira_fail":  "❌ GET /webhook/failed → %d: %s",
-	"admin.diagnose.failed_webhooks_jira_error": "❌ GET /webhook/failed → %s",
-	"admin.diagnose.failed_webhooks_none":       "✅ В Jira нет записей о неудачных доставках. Если в локальном счётчике 0 — значит Jira ничего не отправляла, JQL хуков не сматчил событие.",
-	"admin.diagnose.failed_webhooks_count":      "⚠️ В Jira записано неудачных доставок: %d",
-	"admin.diagnose.failed_webhooks_entry":      "`%s` — %s\n   URL: `%s`",
-	"admin.diagnose.failed_webhooks_truncated":  "… и ещё %d (показано первые 5, кап %d)",
 
 	"admin.webhooks_resync.usage":     "Использование: `/webhooks_resync [telegram_user_id]`\nБез аргумента — пересинхронизировать свои вебхуки.",
 	"admin.webhooks_resync.header":    "*🔁 Пересинхронизация вебхуков — `%d`*",

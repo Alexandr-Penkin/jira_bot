@@ -649,61 +649,6 @@ func (c *Client) ListWebhooks(ctx context.Context, user *storage.User) ([]Listed
 	}
 }
 
-// FailedWebhook is one entry from GET /rest/api/3/webhook/failed. Atlassian
-// retains records for ~30 days of delivery attempts that did not get a 2xx
-// from the receiver — the single most direct signal for "Jira tried but
-// our endpoint did not accept". Fields are the subset we surface; Jira may
-// add more (request id, body) which we ignore unless needed.
-type FailedWebhook struct {
-	ID          string `json:"id"`
-	URL         string `json:"url"`
-	FailureTime int64  `json:"failureTime"`
-}
-
-type listFailedWebhooksResponse struct {
-	Values []FailedWebhook `json:"values"`
-	Next   string          `json:"next,omitempty"`
-}
-
-// ListFailedWebhooks returns recent delivery failures the calling app
-// caused for this user. Pagination uses an opaque `next` URL — Atlassian
-// emits it absolute, so we follow only the leading-relative tail to stay
-// inside our base; in practice the first page is enough for diagnostics.
-// Limit caps total entries so a long failure history does not produce a
-// huge Telegram message.
-func (c *Client) ListFailedWebhooks(ctx context.Context, user *storage.User, limit int) ([]FailedWebhook, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	var all []FailedWebhook
-	path := "/webhook/failed"
-	for {
-		body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-		var resp listFailedWebhooksResponse
-		if err = json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("decode failed-webhook list: %w", err)
-		}
-		all = append(all, resp.Values...)
-		if len(all) >= limit || resp.Next == "" || len(resp.Values) == 0 {
-			if len(all) > limit {
-				all = all[:limit]
-			}
-			return all, nil
-		}
-		// Jira's `next` is an absolute URL — strip the API prefix so
-		// c.doRequest keeps using the OAuth-authenticated base for the
-		// user's cloud id.
-		if idx := strings.Index(resp.Next, "/rest/api/3"); idx != -1 {
-			path = resp.Next[idx+len("/rest/api/3"):]
-		} else {
-			return all, nil
-		}
-	}
-}
-
 type deleteWebhookRequest struct {
 	WebhookIDs []int64 `json:"webhookIds"`
 }

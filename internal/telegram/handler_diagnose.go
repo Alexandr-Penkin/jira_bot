@@ -17,12 +17,10 @@ import (
 )
 
 const (
-	diagnoseProbeBodyLen      = 200
-	diagnoseMaxMissing        = 20
-	diagnoseMaxGranted        = 60
-	diagnoseMaxWebhooks       = 10
-	diagnoseMaxFailedWebhooks = 5
-	diagnoseFailedWebhookCap  = 50
+	diagnoseProbeBodyLen = 200
+	diagnoseMaxMissing   = 20
+	diagnoseMaxGranted   = 60
+	diagnoseMaxWebhooks  = 10
 )
 
 // diagnoseClassicScopes are the legacy "classic" Jira OAuth scopes. Their
@@ -324,64 +322,6 @@ func (h *Handler) diagnoseWebhooks(ctx context.Context, sb *strings.Builder, lan
 	}
 	if len(jiraHooks) > diagnoseMaxWebhooks {
 		sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_truncated", len(jiraHooks)-diagnoseMaxWebhooks))
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("\n")
-	h.diagnoseFailedWebhooks(ctx, sb, lang, user)
-}
-
-// diagnoseFailedWebhooks queries Jira's failed-webhook log to surface
-// delivery attempts that did not receive a 2xx from our receiver. Atlassian
-// keeps these for ~30 days. Zero entries + zero in-process events means
-// Jira simply did not fire anything matching our JQL — the bug is "the
-// change you made does not match the webhook filter", not the transport.
-func (h *Handler) diagnoseFailedWebhooks(ctx context.Context, sb *strings.Builder, lang locale.Lang, user *storage.User) {
-	sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_header"))
-	sb.WriteString("\n")
-
-	failed, err := h.jiraAPI.ListFailedWebhooks(ctx, user, diagnoseFailedWebhookCap)
-	if err != nil {
-		var hErr *jira.HTTPError
-		if errors.As(err, &hErr) {
-			body := hErr.Body
-			if len(body) > diagnoseProbeBodyLen {
-				body = body[:diagnoseProbeBodyLen] + "…"
-			}
-			sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_jira_fail", hErr.Status, format.EscapeMarkdown(body)))
-		} else {
-			sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_jira_error", format.EscapeMarkdown(err.Error())))
-		}
-		sb.WriteString("\n")
-		return
-	}
-
-	if len(failed) == 0 {
-		sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_none"))
-		sb.WriteString("\n")
-		return
-	}
-
-	sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_count", len(failed)))
-	sb.WriteString("\n")
-
-	shown := failed
-	if len(shown) > diagnoseMaxFailedWebhooks {
-		shown = shown[:diagnoseMaxFailedWebhooks]
-	}
-	for i := range shown {
-		fw := &shown[i]
-		when := time.UnixMilli(fw.FailureTime).UTC().Format("2006-01-02 15:04:05 UTC")
-		sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_entry",
-			format.EscapeMarkdown(fw.ID),
-			format.EscapeMarkdown(when),
-			format.EscapeMarkdown(fw.URL),
-		))
-		sb.WriteString("\n")
-	}
-	if len(failed) > diagnoseMaxFailedWebhooks {
-		sb.WriteString(locale.T(lang, "admin.diagnose.failed_webhooks_truncated",
-			len(failed)-diagnoseMaxFailedWebhooks, diagnoseFailedWebhookCap))
 		sb.WriteString("\n")
 	}
 }

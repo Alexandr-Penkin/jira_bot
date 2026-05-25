@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,15 @@ const (
 	mentionCommentPage    = 50
 	mentionCommentMaxPage = 5 // hard cap: 5 * 50 = 250 comments scanned per issue per poll
 	mentionCommentTimeout = 10 * time.Second
+	// commentSnippetMaxRunes caps the rendered comment body per entry. A
+	// Telegram message is 4096 chars and we already spend ~400 on the
+	// header/fields block; capping each comment at 1000 runes leaves room
+	// for several comments in one notification without truncating mid-msg.
+	commentSnippetMaxRunes = 1000
+	// commentsRenderedMax limits how many comments are appended to a
+	// single notification. Beyond this we add a "and N more" line — the
+	// recipient can open the issue if they need the full thread.
+	commentsRenderedMax = 3
 )
 
 // mergedChange tracks a field change, collapsing intermediate states
@@ -75,6 +85,10 @@ type pendingNotification struct {
 	// allowed to have an empty changes section; everything else must have
 	// at least one real change to be sent.
 	isMention bool
+	// comments holds the comment bodies that triggered/relate to this
+	// notification, keyed by comment ID for dedup across merges. Used so
+	// the recipient sees what was actually written, not just "X updated".
+	comments map[string]jira.Comment
 }
 
 // Poller periodically queries the Jira API for issue changes
@@ -295,15 +309,19 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 				}
 			}
 
-			// For mention subscriptions, only notify if user is actually mentioned in recent comments.
-			if sub.SubscriptionType == storage.SubTypeMyMentions {
-				if !p.isUserMentionedInComments(ctx, user, issue.Key, sinceTS) {
+			isMention := sub.SubscriptionType == storage.SubTypeMyMentions
+
+			// For mention subscriptions, only notify if user is actually
+			// mentioned in recent comments — and keep the matching
+			// comments so the notification can render their text.
+			var mentionComments []jira.Comment
+			if isMention {
+				mentionComments = p.findRecentMentionComments(ctx, user, issue.Key, sinceTS)
+				if len(mentionComments) == 0 {
 					droppedNoMent++
 					continue
 				}
 			}
-
-			isMention := sub.SubscriptionType == storage.SubTypeMyMentions
 
 			// If already accumulating changes for this issue+chat, just merge.
 			pendingKey := fmt.Sprintf("%d:%s", sub.TelegramChatID, issue.Key)
@@ -311,7 +329,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			_, inPending := p.pending[pendingKey]
 			p.mu.RUnlock()
 			if inPending {
-				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
+				p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention, mentionComments)
 				passedToPending++
 				p.emitChangeDetected(ctx, sub, issue)
 				continue
@@ -326,7 +344,7 @@ func (p *Poller) pollUser(ctx context.Context, telegramUserID int64, subs []stor
 			}
 			notified[sub.TelegramChatID][issue.Key] = true
 
-			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention)
+			p.addPending(sub.TelegramChatID, issue, user.JiraSiteURL, sinceTS, user.JiraAccountID, locale.FromString(user.Language), isMention, mentionComments)
 			passedToPending++
 			p.emitChangeDetected(ctx, sub, issue)
 		}
@@ -444,7 +462,7 @@ func (p *Poller) emitChangeDetected(ctx context.Context, sub *storage.Subscripti
 	}, "")
 }
 
-func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string, lang locale.Lang, isMention bool) {
+func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sinceTS int64, excludeAccountID string, lang locale.Lang, isMention bool, mentionComments []jira.Comment) {
 	key := fmt.Sprintf("%d:%s", chatID, issue.Key)
 
 	authors, changes := recentChanges(issue, sinceTS, excludeAccountID)
@@ -484,6 +502,7 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 			lang:      lang,
 			authors:   make(map[string]string),
 			changes:   make(map[string]*mergedChange),
+			comments:  make(map[string]jira.Comment),
 			firstSeen: time.Now(),
 			isMention: isMention,
 		}
@@ -497,6 +516,22 @@ func (p *Poller) addPending(chatID int64, issue *jira.Issue, siteURL string, sin
 
 	for _, author := range authors {
 		pn.authors[author.AccountID] = author.DisplayName
+	}
+
+	// Stash comments by ID; if the same comment was edited and re-detected
+	// later in the batch window, the latest body wins. Also credit the
+	// comment author so the rendered notification is never just "someone"
+	// when we know who wrote the mention.
+	for i := range mentionComments {
+		c := mentionComments[i]
+		if c.ID != "" {
+			pn.comments[c.ID] = c
+		}
+		if c.Author != nil && c.Author.AccountID != "" && c.Author.AccountID != excludeAccountID {
+			if _, ok := pn.authors[c.Author.AccountID]; !ok {
+				pn.authors[c.Author.AccountID] = c.Author.DisplayName
+			}
+		}
 	}
 
 	// Merge changes: keep the original "from" side, update the "to" side.
@@ -659,6 +694,8 @@ func (p *Poller) sendPendingNotification(ctx context.Context, pn *pendingNotific
 		fmt.Fprintf(&sb, "%s: %s\n", locale.T(lang, "notif.status"), format.EscapeMarkdown(issue.Fields.Status.Name))
 	}
 
+	renderComments(&sb, lang, pn.comments)
+
 	req := notifier.Request{
 		ChatID:                pn.chatID,
 		Text:                  sb.String(),
@@ -735,17 +772,21 @@ func commentActivityTime(comment *jira.Comment) time.Time {
 	return newest
 }
 
-// isUserMentionedInComments checks if the user's Jira account ID appears
-// in recent comments of the given issue.
-func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.User, issueKey string, sinceTS int64) bool {
+// findRecentMentionComments scans recent comments of the issue and
+// returns every one that mentions the user's Jira account ID within the
+// sinceTS window. Returns nil when the user isn't mentioned (or when the
+// API call fails — fail-closed, so a transient Jira hiccup doesn't fire
+// a phantom notification).
+func (p *Poller) findRecentMentionComments(ctx context.Context, user *storage.User, issueKey string, sinceTS int64) []jira.Comment {
 	if user.JiraAccountID == "" {
-		return false
+		return nil
 	}
 
 	commentCtx, cancel := context.WithTimeout(ctx, mentionCommentTimeout)
 	defer cancel()
 
 	sinceTime := time.Unix(sinceTS, 0)
+	var matched []jira.Comment
 
 	// Paginate through comments (newest first). Jira doesn't support
 	// ordering by `updated`, so we keep scanning until every comment on
@@ -756,10 +797,10 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 		resp, err := p.jiraAPI.GetIssueCommentsPage(commentCtx, user, issueKey, page*mentionCommentPage, mentionCommentPage, "-created")
 		if err != nil {
 			p.log.Debug().Err(err).Str("issue", issueKey).Msg("poller: failed to get comments for mention check")
-			return false
+			return nil
 		}
 		if len(resp.Comments) == 0 {
-			return false
+			return matched
 		}
 
 		anyInWindow := false
@@ -775,7 +816,8 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 			// Check ADF body for mention nodes with user's account ID.
 			for _, id := range comment.Body.ExtractMentionIDs() {
 				if id == user.JiraAccountID {
-					return true
+					matched = append(matched, *comment)
+					break
 				}
 			}
 		}
@@ -784,14 +826,88 @@ func (p *Poller) isUserMentionedInComments(ctx context.Context, user *storage.Us
 		// cannot either, since they contain strictly older `created`
 		// timestamps and any fresh `updated` would have landed here.
 		if !anyInWindow {
-			return false
+			return matched
 		}
 		if resp.StartAt+len(resp.Comments) >= resp.Total {
-			return false
+			return matched
 		}
 	}
 
-	return false
+	return matched
+}
+
+// renderComments appends the bodies of triggering comments to sb, sorted
+// by creation time so the reader sees the conversation in order. The
+// snippet per comment is capped at commentSnippetMaxRunes to keep the
+// total message under Telegram's 4096-char limit; beyond commentsRenderedMax
+// entries we add a tail line pointing the reader at the issue.
+func renderComments(sb *strings.Builder, lang locale.Lang, comments map[string]jira.Comment) {
+	if len(comments) == 0 {
+		return
+	}
+	ordered := make([]jira.Comment, 0, len(comments))
+	for _, c := range comments {
+		ordered = append(ordered, c)
+	}
+	// Oldest first — chronological reads better than reverse-chrono for
+	// multi-comment notifications. Fall back to ID compare on ties so the
+	// ordering is deterministic across renders.
+	sort.Slice(ordered, func(i, j int) bool {
+		ti := commentActivityTime(&ordered[i])
+		tj := commentActivityTime(&ordered[j])
+		if ti.Equal(tj) {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ti.Before(tj)
+	})
+
+	shown := ordered
+	if len(shown) > commentsRenderedMax {
+		shown = shown[:commentsRenderedMax]
+	}
+
+	for i := range shown {
+		c := &shown[i]
+		body := strings.TrimSpace(c.Body.ExtractText())
+		if body == "" {
+			continue
+		}
+		body = truncateRunes(body, commentSnippetMaxRunes)
+		author := ""
+		if c.Author != nil {
+			author = c.Author.DisplayName
+		}
+		sb.WriteString("\n")
+		if author != "" {
+			fmt.Fprintf(sb, "%s %s:\n%s\n",
+				locale.T(lang, "notif.comment_prefix"),
+				format.EscapeMarkdown(author),
+				format.EscapeMarkdown(body))
+		} else {
+			fmt.Fprintf(sb, "%s\n%s\n",
+				locale.T(lang, "notif.comment_prefix_anon"),
+				format.EscapeMarkdown(body))
+		}
+	}
+
+	if len(ordered) > commentsRenderedMax {
+		sb.WriteString("\n")
+		fmt.Fprintf(sb, "%s\n", locale.T(lang, "notif.comments_more", len(ordered)-commentsRenderedMax))
+	}
+}
+
+// truncateRunes returns s capped to max runes, appending an ellipsis when
+// the cut actually trimmed something. Using runes (not bytes) so a UTF-8
+// truncation does not split a multi-byte character.
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
 }
 
 // recentChanges extracts changelog entries created strictly after sinceTS,

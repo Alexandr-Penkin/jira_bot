@@ -226,7 +226,7 @@ func TestAddPending_KeepsMentionWithoutChangelog(t *testing.T) {
 		Changelog: nil,
 	}
 
-	p.addPending(42, issue, "https://example.atlassian.net", time.Now().Add(-time.Minute).Unix(), "", "en", true)
+	p.addPending(42, issue, "https://example.atlassian.net", time.Now().Add(-time.Minute).Unix(), "", "en", true, nil)
 
 	if _, ok := p.pending["42:FOO-1"]; !ok {
 		t.Fatalf("mention notification was dropped despite empty changelog; pending map: %v", p.pending)
@@ -242,7 +242,7 @@ func TestAddPending_DropsNonMentionWithoutChangelog(t *testing.T) {
 	}
 	issue := &jira.Issue{Key: "FOO-2"}
 
-	p.addPending(42, issue, "https://example.atlassian.net", time.Now().Add(-time.Minute).Unix(), "", "en", false)
+	p.addPending(42, issue, "https://example.atlassian.net", time.Now().Add(-time.Minute).Unix(), "", "en", false, nil)
 
 	if _, ok := p.pending["42:FOO-2"]; ok {
 		t.Fatalf("non-mention with no changes should have been dropped")
