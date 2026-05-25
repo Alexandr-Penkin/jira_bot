@@ -3,20 +3,24 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
+	"SleepJiraBot/internal/storage"
 )
 
 const (
 	diagnoseProbeBodyLen = 200
 	diagnoseMaxMissing   = 20
 	diagnoseMaxGranted   = 60
+	diagnoseMaxWebhooks  = 10
 )
 
 // diagnoseClassicScopes are the legacy "classic" Jira OAuth scopes. Their
@@ -151,6 +155,9 @@ func (h *Handler) handleDiagnose(ctx context.Context, chatID, adminID int64, arg
 	})
 
 	sb.WriteString("\n")
+	h.diagnoseWebhooks(ctx, &sb, lang, user, targetID)
+
+	sb.WriteString("\n")
 	switch {
 	case len(hybridMarkers) > 0:
 		sb.WriteString(locale.T(lang, "admin.diagnose.advice_hybrid"))
@@ -213,6 +220,118 @@ func diagnoseHybridMarkers(granted string) []string {
 		}
 	}
 	return found
+}
+
+// diagnoseWebhooks reports what dynamic webhooks Jira has registered for
+// this user vs. what we have in the local webhook_registrations collection.
+// Drift between the two surfaces problems that the counter alone cannot —
+// a webhook deleted Jira-side, an expired registration not yet refreshed,
+// or a local row whose Jira twin is gone.
+func (h *Handler) diagnoseWebhooks(ctx context.Context, sb *strings.Builder, lang locale.Lang, user *storage.User, targetID int64) {
+	sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_header"))
+	sb.WriteString("\n")
+
+	jiraHooks, err := h.jiraAPI.ListWebhooks(ctx, user)
+	if err != nil {
+		var hErr *jira.HTTPError
+		if errors.As(err, &hErr) {
+			body := hErr.Body
+			if len(body) > diagnoseProbeBodyLen {
+				body = body[:diagnoseProbeBodyLen] + "…"
+			}
+			sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_jira_fail", hErr.Status, format.EscapeMarkdown(body)))
+		} else {
+			sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_jira_error", format.EscapeMarkdown(err.Error())))
+		}
+		sb.WriteString("\n")
+		return
+	}
+
+	var localHooks []storage.WebhookRegistration
+	if h.webhookRepo != nil {
+		localHooks, err = h.webhookRepo.GetByUser(ctx, targetID)
+		if err != nil {
+			h.log.Warn().Err(err).Int64("target_id", targetID).Msg("diagnose: failed to read local webhook registrations")
+		}
+	}
+
+	sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_count", len(jiraHooks), len(localHooks)))
+	sb.WriteString("\n")
+
+	// Drift detection by webhook ID — Jira-side that's not in our DB is a
+	// registration we forgot about; local-side that's not in Jira is a
+	// stale row we should clean up.
+	jiraIDs := make(map[int64]struct{}, len(jiraHooks))
+	for i := range jiraHooks {
+		jiraIDs[jiraHooks[i].ID] = struct{}{}
+	}
+	localIDs := make(map[int64]struct{}, len(localHooks))
+	for i := range localHooks {
+		localIDs[localHooks[i].WebhookID] = struct{}{}
+	}
+	var onlyJira, onlyLocal []int64
+	for id := range jiraIDs {
+		if _, ok := localIDs[id]; !ok {
+			onlyJira = append(onlyJira, id)
+		}
+	}
+	for id := range localIDs {
+		if _, ok := jiraIDs[id]; !ok {
+			onlyLocal = append(onlyLocal, id)
+		}
+	}
+	if len(onlyJira) > 0 {
+		sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_only_jira", formatWebhookIDs(onlyJira)))
+		sb.WriteString("\n")
+	}
+	if len(onlyLocal) > 0 {
+		sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_only_local", formatWebhookIDs(onlyLocal)))
+		sb.WriteString("\n")
+	}
+
+	if len(jiraHooks) == 0 {
+		sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_none"))
+		sb.WriteString("\n")
+		return
+	}
+
+	shown := jiraHooks
+	if len(shown) > diagnoseMaxWebhooks {
+		shown = shown[:diagnoseMaxWebhooks]
+	}
+	for i := range shown {
+		wh := &shown[i]
+		expires := wh.ExpirationDate
+		// Jira returns expirationDate as a millisecond epoch string in
+		// newer responses and an ISO-8601 string in older ones; render
+		// the epoch form as a readable UTC date when we can parse it.
+		if ms, parseErr := strconv.ParseInt(wh.ExpirationDate, 10, 64); parseErr == nil {
+			expires = time.UnixMilli(ms).UTC().Format("2006-01-02 15:04 UTC")
+		}
+		jql := wh.JqlFilter
+		if jql == "" {
+			jql = "—"
+		}
+		sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_entry",
+			wh.ID,
+			format.EscapeMarkdown(expires),
+			format.EscapeMarkdown(strings.Join(wh.Events, ", ")),
+			format.EscapeMarkdown(jql),
+		))
+		sb.WriteString("\n")
+	}
+	if len(jiraHooks) > diagnoseMaxWebhooks {
+		sb.WriteString(locale.T(lang, "admin.diagnose.webhooks_truncated", len(jiraHooks)-diagnoseMaxWebhooks))
+		sb.WriteString("\n")
+	}
+}
+
+func formatWebhookIDs(ids []int64) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // diagnoseMissingScopes returns scopes present in required but absent from

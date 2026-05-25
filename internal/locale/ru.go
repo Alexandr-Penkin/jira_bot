@@ -459,6 +459,16 @@ var ru = map[string]string{
 	"admin.diagnose.advice_console":   "🛠 *Действие:* все требуемые скоупы выданы, но API всё равно отвечает 401. Проверьте Atlassian Developer Console: любой классический Jira-скоуп (`read:jira-work`, `write:jira-work`, `read:jira-user`) переводит токен в гибридный режим и вызывает 401 \"scope does not match\". Удалите классические скоупы, оставьте только гранулярные.",
 	"admin.diagnose.advice_ok":        "✅ Выданные скоупы соответствуют требуемым, проверки прошли.",
 
+	"admin.diagnose.webhooks_header":     "*Вебхуки:*",
+	"admin.diagnose.webhooks_jira_fail":  "❌ GET /webhook → %d: %s",
+	"admin.diagnose.webhooks_jira_error": "❌ GET /webhook → %s",
+	"admin.diagnose.webhooks_count":      "В Jira: %d, в локальной БД: %d",
+	"admin.diagnose.webhooks_only_jira":  "⚠️ Только в Jira (нет в БД): `%s`",
+	"admin.diagnose.webhooks_only_local": "⚠️ Только в БД (нет в Jira): `%s`",
+	"admin.diagnose.webhooks_none":       "ℹ️ В Jira нет зарегистрированных вебхуков для этого пользователя.",
+	"admin.diagnose.webhooks_entry":      "`%d` — истекает %s\n   События: %s\n   JQL: `%s`",
+	"admin.diagnose.webhooks_truncated":  "… и ещё %d (показано первые 10)",
+
 	// Create issue
 	"create.usage":                "Использование: `/create PROJECT Тип | Заголовок | Описание`\nИли просто `/create` для пошагового создания.",
 	"create.enter_project":        "Введите ключ проекта (например PROJ):",

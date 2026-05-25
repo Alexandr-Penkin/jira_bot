@@ -459,6 +459,16 @@ var en = map[string]string{
 	"admin.diagnose.advice_console":   "🛠 *Action:* all required scopes are granted but the API still rejects. Check the Atlassian Developer Console: any classic Jira scope (`read:jira-work`, `write:jira-work`, `read:jira-user`) puts the token into hybrid mode and triggers 401 \"scope does not match\". Remove classic scopes, keep only granular.",
 	"admin.diagnose.advice_ok":        "✅ Token grant matches the required set and probes succeeded.",
 
+	"admin.diagnose.webhooks_header":     "*Webhooks:*",
+	"admin.diagnose.webhooks_jira_fail":  "❌ GET /webhook → %d: %s",
+	"admin.diagnose.webhooks_jira_error": "❌ GET /webhook → %s",
+	"admin.diagnose.webhooks_count":      "Jira: %d, local DB: %d",
+	"admin.diagnose.webhooks_only_jira":  "⚠️ Jira-only (missing from DB): `%s`",
+	"admin.diagnose.webhooks_only_local": "⚠️ DB-only (missing from Jira): `%s`",
+	"admin.diagnose.webhooks_none":       "ℹ️ No dynamic webhooks registered in Jira for this user.",
+	"admin.diagnose.webhooks_entry":      "`%d` — expires %s\n   Events: %s\n   JQL: `%s`",
+	"admin.diagnose.webhooks_truncated":  "… and %d more (showing first 10)",
+
 	// Create issue
 	"create.usage":                "Usage: `/create PROJECT Type | Summary | Description`\nOr just `/create` for the wizard.",
 	"create.enter_project":        "Enter project key (e.g. PROJ):",

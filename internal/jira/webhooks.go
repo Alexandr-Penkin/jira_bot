@@ -460,6 +460,49 @@ func (c *Client) RefreshWebhooks(ctx context.Context, user *storage.User, webhoo
 	return time.Now().Add(WebhookLifetime), nil
 }
 
+// ListedWebhook is one entry returned by GET /rest/api/3/webhook. Fields
+// are the subset we surface in diagnostics; Jira returns more (field/issue
+// property filters) that we currently ignore.
+type ListedWebhook struct {
+	ID             int64    `json:"id"`
+	JqlFilter      string   `json:"jqlFilter"`
+	Events         []string `json:"events"`
+	ExpirationDate string   `json:"expirationDate"`
+}
+
+type listWebhooksResponse struct {
+	Values     []ListedWebhook `json:"values"`
+	IsLast     bool            `json:"isLast"`
+	MaxResults int             `json:"maxResults"`
+	StartAt    int             `json:"startAt"`
+	Total      int             `json:"total"`
+}
+
+// ListWebhooks returns every dynamic webhook the calling app has registered
+// for this user, paging through GET /rest/api/3/webhook until isLast.
+// Atlassian returns up to 100 per page; in practice a single user holds at
+// most a handful, but we follow pagination so we never silently truncate.
+func (c *Client) ListWebhooks(ctx context.Context, user *storage.User) ([]ListedWebhook, error) {
+	var all []ListedWebhook
+	startAt := 0
+	for {
+		path := fmt.Sprintf("/webhook?startAt=%d", startAt)
+		body, err := c.doRequest(ctx, user, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp listWebhooksResponse
+		if err = json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("decode webhook list: %w", err)
+		}
+		all = append(all, resp.Values...)
+		if resp.IsLast || len(resp.Values) == 0 {
+			return all, nil
+		}
+		startAt += len(resp.Values)
+	}
+}
+
 type deleteWebhookRequest struct {
 	WebhookIDs []int64 `json:"webhookIds"`
 }
