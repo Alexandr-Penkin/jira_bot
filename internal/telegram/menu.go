@@ -49,6 +49,9 @@ func profileMenuKeyboard(lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.daily_jql"), "a:dailyjql"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.calendar"), "a:calendar"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.back"), "m:main"),
 		),
 	)

@@ -11,6 +11,7 @@ import (
 
 	"net/http"
 
+	"SleepJiraBot/internal/calendar"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/preferences"
@@ -60,6 +61,11 @@ func (b *Bot) SetWebhookStats(repo *storage.WebhookRepo, eventsFn func() int64) 
 
 func (b *Bot) SetOnScheduleChange(fn func()) {
 	b.handler.SetOnScheduleChange(fn)
+}
+
+// SetCalendarSupport forwards to Handler.SetCalendarSupport.
+func (b *Bot) SetCalendarSupport(fetcher *calendar.Fetcher, events storage.CalendarEventRepo) {
+	b.handler.SetCalendarSupport(fetcher, events)
 }
 
 // UseMongoStateStore swaps the default in-memory FSM store for a

@@ -14,6 +14,8 @@ import (
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	"SleepJiraBot/internal/calendar"
+	"SleepJiraBot/internal/calendarpoller"
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
 	"SleepJiraBot/internal/identity"
@@ -104,9 +106,13 @@ func main() {
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
 	templateRepo := storage.NewTemplateRepo(mongo.Database())
+	calendarEventRepo := storage.NewCalendarEventRepo(mongo.Database())
 	oauthStateRepo := storage.NewOAuthStateRepo(mongo.Database())
 	if err := oauthStateRepo.EnsureIndexes(ctx); err != nil {
 		log.Warn().Err(err).Msg("failed to ensure oauth_states TTL index; continuing")
+	}
+	if err := calendarEventRepo.EnsureIndexes(ctx); err != nil {
+		log.Warn().Err(err).Msg("failed to ensure calendar_events indexes; continuing")
 	}
 
 	// Phase 0 of the DDD microservices split: publish domain events to a
@@ -230,6 +236,13 @@ func main() {
 		}
 	}
 
+	// Calendar fetcher uses its own *http.Client so a slow calendar
+	// host can't stall the shared Jira client. The Telegram handler
+	// uses it to validate URLs synchronously on entry.
+	calendarFetchTimeout := parseDurationOrDefault(cfg.CalendarFetchTimeout, calendar.DefaultFetchTimeout, "CALENDAR_FETCH_TIMEOUT", log)
+	calendarFetcher := calendar.NewFetcher(calendarFetchTimeout, calendar.DefaultMaxBytes)
+	bot.SetCalendarSupport(calendarFetcher, calendarEventRepo)
+
 	// Notifier routes the producer-side Send from poller/scheduler/webhook.
 	// When NOTIFY_VIA_EVENTS=true and events are enabled, messages go out
 	// as NotifyRequested and a separate telegram-svc delivers them; default
@@ -285,6 +298,22 @@ func main() {
 	issuePoller.SetEventPublisher(eventPub)
 	bot.SetPollerRef(issuePoller)
 
+	calendarInterval := parseDurationOrDefault(cfg.CalendarPollInterval, 5*time.Minute, "CALENDAR_POLL_INTERVAL", log)
+	calendarLookahead := parseDurationOrDefault(cfg.CalendarLookahead, 24*time.Hour, "CALENDAR_LOOKAHEAD", log)
+	calPoller := calendarpoller.New(
+		userRepo,
+		calendarEventRepo,
+		calendarFetcher,
+		calendarpoller.PackageParser{},
+		calendarpoller.PackageExpander{},
+		telegramNotifier,
+		dedup,
+		log,
+		calendarInterval,
+		calendarLookahead,
+		cfg.CalendarDefaultReminderMin,
+	)
+
 	webhookHandler := webhook.NewHandler(subRepo, userRepo, telegramNotifier, cfg.JiraWebhookSecret, cfg.AllowUnsignedWebhooks, log, dedup)
 	webhookHandler.SetEventPublisher(eventPub)
 	eventsFn := webhookHandler.EventsReceived
@@ -331,6 +360,16 @@ func main() {
 		}()
 	} else {
 		log.Info().Msg("polling handled externally; monolith poller disabled")
+	}
+
+	if cfg.EmbedCalendarPoller {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			calPoller.Start(ctx)
+		}()
+	} else {
+		log.Info().Msg("calendar polling handled externally; monolith calendar poller disabled")
 	}
 
 	if cfg.EmbedTelegramUpdates {
@@ -416,6 +455,22 @@ const (
 	// daily run does not let webhooks lapse.
 	webhookRefreshLeadTime = 7 * 24 * time.Hour
 )
+
+// parseDurationOrDefault is a tiny helper for the calendar-feature env
+// knobs whose schema mirrors POLL_INTERVAL — duration strings parsed at
+// use site. Logs a warning on bad input so a typo doesn't silently fall
+// back to the default.
+func parseDurationOrDefault(raw string, def time.Duration, envName string, log zerolog.Logger) time.Duration {
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warn().Str("env", envName).Str("value", raw).Dur("default", def).Msg("invalid duration; using default")
+		return def
+	}
+	return d
+}
 
 func runWebhookRefresher(ctx context.Context, mgr *jira.WebhookManager, log zerolog.Logger) {
 	if mgr == nil {

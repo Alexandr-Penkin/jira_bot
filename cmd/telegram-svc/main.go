@@ -46,6 +46,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 
+	"SleepJiraBot/internal/calendar"
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
 	"SleepJiraBot/internal/identity"
@@ -369,6 +370,8 @@ func startUpdateHandler(
 	scheduleRepo := storage.NewScheduleRepo(mongoClient.Database())
 	webhookRepo := storage.NewWebhookRepo(mongoClient.Database())
 	templateRepo := storage.NewTemplateRepo(mongoClient.Database())
+	calendarEventRepo := storage.NewCalendarEventRepo(mongoClient.Database())
+	_ = calendarEventRepo.EnsureIndexes(ctx)
 	oauthStateRepo := storage.NewOAuthStateRepo(mongoClient.Database())
 	if err := oauthStateRepo.EnsureIndexes(ctx); err != nil {
 		log.Warn().Err(err).Msg("telegram-svc: failed to ensure oauth_states TTL index; continuing")
@@ -454,6 +457,15 @@ func startUpdateHandler(
 		log.Info().Str("url", cfg.WebhookSvcURL).Msg("telegram-svc: admin stats events_received sourced from webhook-svc")
 	}
 	bot.SetWebhookStats(webhookRepo, eventsFn)
+
+	// Calendar URL validation handshake from the menu uses its own
+	// fetcher. Calendar polling is owned by the monolith (cmd/bot)
+	// via EMBED_CALENDAR_POLLER; telegram-svc is only the UI here.
+	calFetchTimeout, perr := time.ParseDuration(cfg.CalendarFetchTimeout)
+	if perr != nil || calFetchTimeout <= 0 {
+		calFetchTimeout = calendar.DefaultFetchTimeout
+	}
+	bot.SetCalendarSupport(calendar.NewFetcher(calFetchTimeout, calendar.DefaultMaxBytes), calendarEventRepo)
 
 	if cfg.PersistConversationStates {
 		if err := bot.UseMongoStateStore(ctx, mongoClient.Database(), log); err != nil {

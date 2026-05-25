@@ -153,6 +153,19 @@ type Config struct {
 	OtelExporterEndpoint string
 	OtelServiceName      string
 	OtelExporterInsecure bool
+
+	// Calendar feed knobs. EmbedCalendarPoller mirrors EmbedPoller —
+	// the loop runs in the monolith by default; set to false when
+	// running multiple replicas to keep notifications single-shot.
+	// CalendarPollInterval / CalendarLookahead / CalendarFetchTimeout
+	// are duration strings parsed at use site (matches POLL_INTERVAL).
+	// CalendarDefaultReminderMin is the seed reminder window when a
+	// user adds a calendar URL.
+	EmbedCalendarPoller        bool
+	CalendarPollInterval       string
+	CalendarLookahead          string
+	CalendarFetchTimeout       string
+	CalendarDefaultReminderMin int
 }
 
 func Load() (*Config, error) {
@@ -188,6 +201,27 @@ func Load() (*Config, error) {
 		DedupRedisURL:         os.Getenv("DEDUP_REDIS_URL"),
 		OtelExporterEndpoint:  os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		OtelServiceName:       os.Getenv("OTEL_SERVICE_NAME"),
+
+		EmbedCalendarPoller:        true,
+		CalendarPollInterval:       getEnvOrDefault("CALENDAR_POLL_INTERVAL", "5m"),
+		CalendarLookahead:          getEnvOrDefault("CALENDAR_LOOKAHEAD", "24h"),
+		CalendarFetchTimeout:       getEnvOrDefault("CALENDAR_FETCH_TIMEOUT", "30s"),
+		CalendarDefaultReminderMin: 15,
+	}
+
+	if v := os.Getenv("EMBED_CALENDAR_POLLER"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("EMBED_CALENDAR_POLLER must be a boolean (true/false/1/0)")
+		}
+		cfg.EmbedCalendarPoller = enabled
+	}
+	if v := os.Getenv("CALENDAR_DEFAULT_REMINDER_MIN"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 1440 {
+			return nil, errors.New("CALENDAR_DEFAULT_REMINDER_MIN must be an integer in [1, 1440]")
+		}
+		cfg.CalendarDefaultReminderMin = n
 	}
 
 	if v := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); v != "" {

@@ -43,9 +43,29 @@ type User struct {
 	DailyPlanJQL         string   `bson:"daily_plan_jql,omitempty"`
 	DoneStatuses         []string `bson:"done_statuses,omitempty"`
 	HoldStatuses         []string `bson:"hold_statuses,omitempty"`
-	CreatedTS            int64    `bson:"created_ts"`
-	ModifiedTS           int64    `bson:"modified_ts"`
+	// CalendarURL stores the encrypted ICS feed URL the user wants the
+	// bot to poll. Sensitive: anyone holding the URL can read the
+	// calendar, so we keep it under the same AES-GCM envelope as the
+	// Jira OAuth tokens. Empty means the feature is off for the user.
+	CalendarURL             string `bson:"calendar_url,omitempty"`
+	CalendarNotifyEnabled   bool   `bson:"calendar_notify_enabled,omitempty"`
+	CalendarReminderMinutes int    `bson:"calendar_reminder_minutes,omitempty"`
+	CalendarLastFetchedAt   int64  `bson:"calendar_last_fetched_at,omitempty"`
+	CalendarLastError       string `bson:"calendar_last_error,omitempty"`
+	CreatedTS               int64  `bson:"created_ts"`
+	ModifiedTS              int64  `bson:"modified_ts"`
 }
+
+const (
+	// DefaultCalendarReminderMinutes is what we seed CalendarReminderMinutes
+	// with on first set. 15 min is the same default Google Calendar uses
+	// for new event notifications.
+	DefaultCalendarReminderMinutes = 15
+	// maxCalendarLastErrorLen caps the truncated error string written
+	// back to the user document — the field is shown in the profile
+	// UI, so we keep it small.
+	maxCalendarLastErrorLen = 200
+)
 
 type UserRepo struct {
 	coll *mongo.Collection
@@ -81,6 +101,13 @@ func (r *UserRepo) GetByTelegramID(ctx context.Context, telegramUserID int64) (*
 
 	if err = r.decryptTokens(&user); err != nil {
 		return nil, fmt.Errorf("decrypt tokens: %w", err)
+	}
+	if err = r.decryptCalendar(&user); err != nil {
+		// A corrupted CalendarURL must not bounce a user out of Jira
+		// auth — log via the returned error and continue with the
+		// field cleared so the rest of the profile still works.
+		user.CalendarURL = ""
+		user.CalendarLastError = "decrypt calendar url: " + err.Error()
 	}
 
 	return &user, nil
@@ -334,6 +361,10 @@ func (r *UserRepo) GetByJiraAccountIDs(ctx context.Context, accountIDs []string)
 		if decErr := r.decryptTokens(&users[i]); decErr != nil {
 			return nil, fmt.Errorf("decrypt tokens for user %d: %w", users[i].TelegramUserID, decErr)
 		}
+		if decErr := r.decryptCalendar(&users[i]); decErr != nil {
+			users[i].CalendarURL = ""
+			users[i].CalendarLastError = "decrypt calendar url: " + decErr.Error()
+		}
 	}
 
 	return users, nil
@@ -460,4 +491,157 @@ func (r *UserRepo) decryptTokens(user *User) error {
 		return fmt.Errorf("refresh token: %w", err)
 	}
 	return nil
+}
+
+func (r *UserRepo) decryptCalendar(user *User) error {
+	if user.CalendarURL == "" {
+		return nil
+	}
+	plain, err := r.enc.Decrypt(user.CalendarURL)
+	if err != nil {
+		return err
+	}
+	user.CalendarURL = plain
+	return nil
+}
+
+// SetCalendarURL stores an encrypted ICS feed URL. Passing an empty
+// rawURL clears the calendar configuration (URL, enabled flag, last
+// fetched-at/error). On first set we default the enabled flag to true
+// and the reminder window to DefaultCalendarReminderMinutes so the user
+// gets notifications without an extra menu trip.
+func (r *UserRepo) SetCalendarURL(ctx context.Context, telegramUserID int64, rawURL string) error {
+	now := time.Now().Unix()
+	filter := bson.M{"telegram_user_id": telegramUserID}
+
+	if rawURL == "" {
+		update := bson.M{
+			"$set": bson.M{
+				"modified_ts": now,
+			},
+			"$unset": bson.M{
+				"calendar_url":              "",
+				"calendar_notify_enabled":   "",
+				"calendar_reminder_minutes": "",
+				"calendar_last_fetched_at":  "",
+				"calendar_last_error":       "",
+			},
+		}
+		_, err := r.coll.UpdateOne(ctx, filter, update)
+		return err
+	}
+
+	encURL, err := r.enc.Encrypt(rawURL)
+	if err != nil {
+		return fmt.Errorf("encrypt calendar url: %w", err)
+	}
+
+	// Read current state so we only seed defaults on the first set,
+	// otherwise an SetCalendarURL after a toggle-off would silently
+	// turn notifications back on.
+	var existing User
+	getErr := r.coll.FindOne(ctx, filter).Decode(&existing)
+
+	setDoc := bson.M{
+		"calendar_url":             encURL,
+		"calendar_last_fetched_at": int64(0),
+		"calendar_last_error":      "",
+		"modified_ts":              now,
+	}
+	if errors.Is(getErr, mongo.ErrNoDocuments) || existing.CalendarReminderMinutes == 0 {
+		setDoc["calendar_notify_enabled"] = true
+		setDoc["calendar_reminder_minutes"] = DefaultCalendarReminderMinutes
+	}
+
+	update := bson.M{
+		"$set": setDoc,
+		"$setOnInsert": bson.M{
+			"created_ts": now,
+		},
+	}
+	opts := options.UpdateOne().SetUpsert(true)
+	_, err = r.coll.UpdateOne(ctx, filter, update, opts)
+	return err
+}
+
+// SetCalendarNotifyEnabled toggles the notification gate without
+// changing the stored URL. Off keeps the URL on disk so the user can
+// flip it back on without re-entering it.
+func (r *UserRepo) SetCalendarNotifyEnabled(ctx context.Context, telegramUserID int64, enabled bool) error {
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"calendar_notify_enabled": enabled,
+			"modified_ts":             time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+// SetCalendarReminderMinutes records the lead time the user wants
+// before each event. Clamped to a sane [1, 1440] range so a bad input
+// cannot turn the poller into a degenerate burst-sender.
+func (r *UserRepo) SetCalendarReminderMinutes(ctx context.Context, telegramUserID int64, mins int) error {
+	if mins < 1 {
+		mins = 1
+	}
+	if mins > 1440 {
+		mins = 1440
+	}
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"calendar_reminder_minutes": mins,
+			"modified_ts":               time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+// MarkCalendarFetched records the timestamp of the last poll attempt
+// and the truncated error string (empty on success). Used by the
+// calendar poller as both a heartbeat and a way to surface fetch
+// failures in the profile UI.
+func (r *UserRepo) MarkCalendarFetched(ctx context.Context, telegramUserID int64, errMsg string) error {
+	if len(errMsg) > maxCalendarLastErrorLen {
+		errMsg = errMsg[:maxCalendarLastErrorLen]
+	}
+	filter := bson.M{"telegram_user_id": telegramUserID}
+	update := bson.M{
+		"$set": bson.M{
+			"calendar_last_fetched_at": time.Now().Unix(),
+			"calendar_last_error":      errMsg,
+			"modified_ts":              time.Now().Unix(),
+		},
+	}
+	_, err := r.coll.UpdateOne(ctx, filter, update)
+	return err
+}
+
+// ListUsersWithCalendar returns every user with a non-empty
+// CalendarURL AND notifications enabled. The poller consumes this list
+// every tick — calendars are sparse so a per-user filter avoids
+// scanning the entire users collection.
+func (r *UserRepo) ListUsersWithCalendar(ctx context.Context) ([]User, error) {
+	cursor, err := r.coll.Find(ctx, bson.M{
+		"calendar_url":            bson.M{"$exists": true, "$ne": ""},
+		"calendar_notify_enabled": true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var users []User
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+	for i := range users {
+		if decErr := r.decryptCalendar(&users[i]); decErr != nil {
+			users[i].CalendarURL = ""
+			users[i].CalendarLastError = "decrypt calendar url: " + decErr.Error()
+		}
+	}
+	return users, nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"SleepJiraBot/internal/calendar"
 	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
@@ -56,6 +57,18 @@ type Handler struct {
 	webhookRepo      *storage.WebhookRepo
 	webhookEvents    func() int64
 	httpClient       *http.Client
+	calendarFetcher  *calendar.Fetcher
+	calendarEvents   storage.CalendarEventRepo
+}
+
+// SetCalendarSupport wires the calendar fetcher used for URL
+// validation on entry and the event-state repo used by the "Remove
+// calendar" UX. Both are optional; a nil fetcher disables the URL
+// validation handshake (the URL still saves) and a nil event repo
+// turns "Remove" into a no-op against the events collection.
+func (h *Handler) SetCalendarSupport(fetcher *calendar.Fetcher, events storage.CalendarEventRepo) {
+	h.calendarFetcher = fetcher
+	h.calendarEvents = events
 }
 
 // SetWebhookStats wires the webhook registration repo and an accessor for
@@ -406,6 +419,8 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDailyJQLEdit(ctx, cq, "daily_jql_plan", "daily_jql.enter_plan")
 	case "djql_reset":
 		h.handleDailyJQLReset(ctx, cq)
+	case "cal":
+		h.handleCalendarSubCallback(ctx, cq, parts)
 	case "cr":
 		h.handleCreateCallback(ctx, cq, parts)
 	case createFastEpicCallback:
@@ -594,6 +609,8 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.handleStoryPointsFieldStart(ctx, chatID, userID)
 	case "dailyjql":
 		h.handleDailyJQLStart(ctx, chatID, userID)
+	case "calendar":
+		h.handleCalendarMenu(ctx, chatID, userID, cq.Message.MessageID)
 	case "create":
 		h.handleCreateStart(ctx, chatID, userID)
 	case "templates":
@@ -784,6 +801,14 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 	case "schedule":
 		h.states.Clear(chatID, userID)
 		h.sendMessage(withMenuButton(h.handleSchedule(ctx, chatID, userID, text), lang))
+
+	case calendarStateAwaitURL:
+		h.states.Clear(chatID, userID)
+		h.handleCalendarURLInput(ctx, chatID, userID, lang, text)
+
+	case calendarStateAwaitReminder:
+		h.states.Clear(chatID, userID)
+		h.handleCalendarReminderInput(ctx, chatID, userID, lang, text)
 
 	case dailySubStateCustom:
 		h.handleDailySubTimeInput(ctx, chatID, userID, lang, text)
