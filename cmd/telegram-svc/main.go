@@ -55,6 +55,7 @@ import (
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
 	"SleepJiraBot/internal/telegram"
+	"SleepJiraBot/internal/webhookstats"
 	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
@@ -441,6 +442,18 @@ func startUpdateHandler(
 		cleanup()
 		return nil, nil, err
 	}
+
+	// Wire admin stats: webhookRepo for the count of registered webhooks,
+	// and (when WEBHOOK_SVC_URL is set) a remote fetcher for the running
+	// event counter from webhook-svc. Without this, `/admin → Stats` and
+	// `/diagnose`'s webhook section silently read nil and print zeros —
+	// which is what masked the resync/diagnose divergence before.
+	var eventsFn func() int64
+	if cfg.WebhookSvcURL != "" {
+		eventsFn = webhookstats.RemoteFetcher(cfg.WebhookSvcURL, cfg.InternalAuthToken, httpClient, log)
+		log.Info().Str("url", cfg.WebhookSvcURL).Msg("telegram-svc: admin stats events_received sourced from webhook-svc")
+	}
+	bot.SetWebhookStats(webhookRepo, eventsFn)
 
 	if cfg.PersistConversationStates {
 		if err := bot.UseMongoStateStore(ctx, mongoClient.Database(), log); err != nil {
