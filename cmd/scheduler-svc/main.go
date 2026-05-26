@@ -1,16 +1,13 @@
-// Command scheduler-svc is the Phase-4 extraction of the cron-triggered
-// report scheduler from the SleepJiraBot monolith. It shares Mongo (and
-// optionally NATS) with the bot process and owns:
+// Command scheduler-svc owns the cron-triggered report scheduler of the
+// SleepJiraBot microservice fleet. It shares Mongo and NATS with the rest
+// of the fleet and owns:
 //   - loading all ScheduledReport documents on startup
 //   - firing each report on its cron expression
-//   - executing the JQL via a leased Jira token and delivering the
-//     result to Telegram
+//   - executing the JQL via a Jira token leased from identity-svc and
+//     publishing the result as a NotifyRequested event (telegram-svc
+//     delivers)
 //
-// The monolith keeps its own embedded scheduler until
-// EMBED_SCHEDULER=false, so running scheduler-svc is additive.
-//
-// This slice does NOT listen for schedule-CRUD events yet; bots reload
-// the scheduler in-process when the user edits schedules. A future
+// This slice does NOT listen for schedule-CRUD events yet; a future
 // iteration will subscribe to sjb.schedule.{created,updated,deleted}
 // events for live config updates across instances.
 package main
@@ -29,20 +26,16 @@ import (
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
-	"SleepJiraBot/internal/identity"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/scheduler"
 	"SleepJiraBot/internal/storage"
-	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
 	"SleepJiraBot/pkg/telemetry"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
@@ -105,24 +98,20 @@ func main() {
 	userRepo := storage.NewUserRepo(mongo.Database(), enc)
 	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 
-	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
-	var natsPub *natsx.JetStreamPublisher
-	if cfg.EnableEventPublish {
-		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
-		if err != nil {
-			log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
-			return
-		}
-		if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
-			log.Error().Err(err).Msg("failed to ensure JetStream streams")
-			_ = jsPub.Close()
-			return
-		}
-		eventPub = jsPub
-		natsPub = jsPub
-		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
-		defer func() { _ = jsPub.Close() }()
+	jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
+	if err != nil {
+		log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
+		return
 	}
+	if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
+		log.Error().Err(err).Msg("failed to ensure JetStream streams")
+		_ = jsPub.Close()
+		return
+	}
+	defer func() { _ = jsPub.Close() }()
+	log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
+	eventPub := jsPub
+	natsPub := jsPub
 	userRepo.SetEventPublisher(eventPub)
 
 	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 90*time.Second)
@@ -143,35 +132,20 @@ func main() {
 	jiraClient.SetEventPublisher(eventPub)
 	jiraClient.StartCleanup(ctx)
 
-	var tokenProvider jira.TokenProvider
-	if cfg.IdentitySvcURL != "" {
-		remote, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
-		if err != nil {
-			log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
-			return
-		}
-		tokenProvider = remote
-		log.Info().Str("url", cfg.IdentitySvcURL).Msg("using remote identity-svc for token lease")
-	} else {
-		local := identity.NewLocalProvider(userRepo, oauthClient, log)
-		local.SetEventPublisher(eventPub)
-		tokenProvider = local
-		log.Info().Msg("using in-process local token provider")
+	if cfg.IdentitySvcURL == "" {
+		log.Error().Msg("IDENTITY_SVC_URL is required: Jira tokens are leased from identity-svc")
+		return
+	}
+	tokenProvider, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
+	if err != nil {
+		log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
+		return
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
+	log.Info().Str("url", cfg.IdentitySvcURL).Msg("leasing Jira tokens from identity-svc")
 
-	var sendNotifier notifier.Notifier
-	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
-		sendNotifier = notifier.NewEvent(eventPub, log)
-		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
-	} else {
-		tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
-		if err != nil {
-			log.Error().Err(err).Msg("scheduler-svc: Telegram API init failed")
-			return
-		}
-		sendNotifier = notifier.NewDirect(tgAPI, log)
-	}
+	sendNotifier := notifier.NewEvent(eventPub, log)
+	log.Info().Msg("notifier: publishing NotifyRequested events; telegram-svc delivers")
 
 	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, sendNotifier, log)
 	sched.SetEventPublisher(eventPub)

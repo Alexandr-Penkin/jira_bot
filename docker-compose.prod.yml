@@ -6,6 +6,7 @@ services:
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
       DEDUP_REDIS_URL: redis://redis:6379/0
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
@@ -35,6 +36,7 @@ services:
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
       DEDUP_REDIS_URL: redis://redis:6379/0
       WEBHOOK_SVC_ADDR: ":8081"
     healthcheck:

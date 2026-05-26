@@ -1,3 +1,18 @@
+// Command bot is the auth + web + calendar service of the SleepJiraBot
+// microservice fleet. After the monolith cutover it owns only the
+// concerns that have no other home:
+//   - the OAuth 2.0 /callback endpoint (token exchange, single-site
+//     finalize, multi-site staging) plus the post-auth Telegram UX and
+//     webhook registration
+//   - the public web pages (landing, /privacy, /logo.jpeg, /health)
+//   - the calendar feed poller (reminders fan out as NotifyRequested
+//     events; telegram-svc delivers them)
+//
+// Everything else runs in its own service: token custody (identity-svc),
+// preferences (preferences-svc), Jira polling (subscription-svc), cron
+// reports (scheduler-svc), webhook ingress (webhook-svc), and Telegram
+// update-handling + delivery (telegram-svc). NATS is mandatory — there is
+// no in-process fallback — and Jira tokens are leased from identity-svc.
 package main
 
 import (
@@ -10,30 +25,22 @@ import (
 	"syscall"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"SleepJiraBot/internal/calendar"
 	"SleepJiraBot/internal/calendarpoller"
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
-	"SleepJiraBot/internal/identity"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/notifydedup"
-	"SleepJiraBot/internal/poller"
-	"SleepJiraBot/internal/preferences"
 	"SleepJiraBot/internal/proxy"
-	"SleepJiraBot/internal/scheduler"
 	"SleepJiraBot/internal/storage"
-	"SleepJiraBot/internal/telegram"
-	"SleepJiraBot/internal/webhook"
-	"SleepJiraBot/internal/webhookstats"
-	eventsv1 "SleepJiraBot/pkg/events/v1"
+	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
-	"SleepJiraBot/pkg/preferencesclient"
 	"SleepJiraBot/pkg/telemetry"
 	"SleepJiraBot/web"
 )
@@ -46,8 +53,13 @@ func main() {
 		panic("failed to load config: " + err.Error())
 	}
 
-	log := logger.New(cfg.LogLevel)
-	log.Info().Msg("starting SleepJiraBot")
+	log := logger.New(cfg.LogLevel).With().Str("svc", "bot").Logger()
+	log.Info().Msg("starting SleepJiraBot auth/web/calendar service")
+
+	if cfg.IdentitySvcURL == "" {
+		log.Error().Msg("IDENTITY_SVC_URL is required: Jira tokens are leased from identity-svc")
+		return
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -68,7 +80,6 @@ func main() {
 	}, log)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to init OpenTelemetry")
-		cancel()
 		return
 	}
 	defer func() {
@@ -82,7 +93,6 @@ func main() {
 	mongo, err := storage.ConnectMongo(ctx, cfg.MongoURI, cfg.MongoDB, log)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to connect to MongoDB")
-		cancel()
 		return
 	}
 	defer func() {
@@ -94,7 +104,6 @@ func main() {
 	enc, err := crypto.NewEncryptorFromHex(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create encryptor")
-		cancel()
 		return
 	}
 	if cfg.EncryptionKeyPrevious != "" {
@@ -103,44 +112,39 @@ func main() {
 
 	userRepo := storage.NewUserRepo(mongo.Database(), enc)
 	subRepo := storage.NewSubscriptionRepo(mongo.Database())
-	scheduleRepo := storage.NewScheduleRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
-	templateRepo := storage.NewTemplateRepo(mongo.Database())
 	calendarEventRepo := storage.NewCalendarEventRepo(mongo.Database())
 	oauthStateRepo := storage.NewOAuthStateRepo(mongo.Database())
+	oauthPendingRepo := storage.NewOAuthPendingRepo(mongo.Database(), enc)
 	if err := oauthStateRepo.EnsureIndexes(ctx); err != nil {
 		log.Warn().Err(err).Msg("failed to ensure oauth_states TTL index; continuing")
+	}
+	if err := oauthPendingRepo.EnsureIndexes(ctx); err != nil {
+		log.Warn().Err(err).Msg("failed to ensure oauth_pending_sites TTL index; continuing")
 	}
 	if err := calendarEventRepo.EnsureIndexes(ctx); err != nil {
 		log.Warn().Err(err).Msg("failed to ensure calendar_events indexes; continuing")
 	}
 
-	// Phase 0 of the DDD microservices split: publish domain events to a
-	// NATS JetStream cluster alongside every primary write path. Gated by
-	// ENABLE_EVENT_PUBLISH so production can roll it out gradually and fall
-	// back by toggling one env var.
-	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
-	if cfg.EnableEventPublish {
-		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
-		if err != nil {
-			log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS; continuing without event publish")
-		} else {
-			if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
-				log.Error().Err(err).Msg("failed to ensure JetStream streams; continuing without event publish")
-				_ = jsPub.Close()
-			} else {
-				eventPub = jsPub
-				log.Info().Str("nats_url", cfg.NatsURL).Msg("event publisher connected to NATS JetStream")
-				defer func() { _ = jsPub.Close() }()
-			}
-		}
+	// NATS is mandatory: calendar reminders fan out as NotifyRequested
+	// events and UserAuthenticated is published on connect. A connection
+	// failure is fatal — there is no in-process delivery fallback.
+	jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
+	if err != nil {
+		log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
+		return
 	}
+	if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
+		log.Error().Err(err).Msg("failed to ensure JetStream streams")
+		_ = jsPub.Close()
+		return
+	}
+	defer func() { _ = jsPub.Close() }()
+	log.Info().Str("nats_url", cfg.NatsURL).Msg("event publisher connected to NATS JetStream")
+	eventPub := jsPub
 	subRepo.SetEventPublisher(eventPub)
 	userRepo.SetEventPublisher(eventPub)
 
-	// Telegram long-polling sets u.Timeout=60s server-side, so the HTTP
-	// client timeout must comfortably exceed that (request body read
-	// time + network jitter) to avoid aborting healthy long polls.
 	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 90*time.Second)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create HTTP client with proxy")
@@ -159,116 +163,59 @@ func main() {
 	oauthClient := jira.NewOAuthClient(oauthCfg, log)
 	oauthClient.SetStateStore(oauthStateRepo)
 	oauthClient.StartCleanup(ctx)
+
 	jiraClient := jira.NewClient(oauthClient, userRepo, log)
 	jiraClient.SetEventPublisher(eventPub)
 	jiraClient.StartCleanup(ctx)
+
+	// Jira tokens are leased from identity-svc so it is the single refresh
+	// owner across the fleet — the webhook registration that fires on
+	// connect goes through this path.
+	tokenProvider, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
+	if err != nil {
+		log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
+		return
+	}
+	jiraClient.SetTokenProvider(tokenProvider)
+	log.Info().Str("url", cfg.IdentitySvcURL).Msg("leasing Jira tokens from identity-svc")
+
 	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, cfg.JiraWebhookURL, log)
 
-	// Phase 2: identity-svc TokenLease. The monolith exposes the
-	// protocol on an internal listener so Phase-3 services (webhook-svc,
-	// scheduler-svc, subscription-svc) can migrate to remote leases
-	// without a second extraction round. LocalProvider shares the same
-	// refresh mutex domain as jira.Client so, until Phase 2b switches
-	// jira.Client to consume the lease, both paths are protected by
-	// their own locks — concurrent refreshes remain impossible at the
-	// Mongo write layer because UpdateTokens is atomic, but this is
-	// worth retiring in 2b.
-	identityProvider := identity.NewLocalProvider(userRepo, oauthClient, log)
-	identityProvider.SetEventPublisher(eventPub)
+	// The Telegram client is used only for OAuth-flow messages: the
+	// multi-site selection keyboard and the post-connect confirmation.
+	tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
+	if err != nil {
+		log.Error().Err(err).Msg("Telegram API init failed")
+		return
+	}
+	log.Info().Str("bot", tgAPI.Self.UserName).Msg("authorized on Telegram")
 
-	// Phase 5: construct the preferences provider. When
-	// PREFERENCES_SVC_URL is set and EMBED_PREFERENCES=false, the
-	// monolith's telegram handlers write preferences through the remote
-	// HTTP client; otherwise they go through the in-process
-	// LocalProvider against the shared users collection. Either way
-	// UserRepo publishes LanguageChanged / DefaultsChanged events, so
-	// co-resident operation never double-publishes.
-	var prefsProvider preferences.Provider
-	if cfg.PreferencesSvcURL != "" && !cfg.EmbedPreferences {
-		remote, err := preferencesclient.New(cfg.PreferencesSvcURL, cfg.InternalAuthToken, nil)
-		if err != nil {
-			log.Error().Err(err).Str("url", cfg.PreferencesSvcURL).Msg("failed to construct preferences client")
+	siteConnector := jira.NewSiteConnector(oauthClient, userRepo, subRepo, webhookMgr, oauthPendingRepo, tgAPI, log)
+	siteConnector.SetEventPublisher(eventPub)
+
+	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, siteConnector, tgAPI, log)
+	callbackServer.HandleFunc("/logo.jpeg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(web.LogoJPEG())
+	})
+	callbackServer.HandleFunc("/privacy", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(web.PrivacyHTML())
+	})
+	callbackServer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
 			return
 		}
-		prefsProvider = remote
-		log.Info().Str("url", cfg.PreferencesSvcURL).Msg("preferences: routing through remote preferences-svc")
-	} else {
-		prefsProvider = preferences.NewLocalProvider(userRepo, log)
-	}
-	// Route jira.Client through the lease provider so the monolith and
-	// identity-svc cannot race on refresh-token rotation: the provider
-	// serialises refreshes per user, and there is only one provider.
-	jiraClient.SetTokenProvider(identityProvider)
-	identityServer := identity.NewServer(identityProvider, cfg.InternalAuthToken, log)
-	internalSrv := &http.Server{
-		Addr:              cfg.InternalAddr,
-		Handler:           otelhttp.NewHandler(identityServer.Handler(), "bot.internal-lease"),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	if cfg.InternalAuthToken == "" {
-		log.Warn().Str("addr", cfg.InternalAddr).Msg("identity: INTERNAL_AUTH_TOKEN empty; lease endpoint relies on network-level protection")
-	}
-
-	var bot *telegram.Bot
-	for attempt := 1; ; attempt++ {
-		bot, err = telegram.NewBot(cfg.TelegramToken, oauthClient, jiraClient, userRepo, prefsProvider, subRepo, scheduleRepo, webhookMgr, templateRepo, log, cfg.AdminTelegramID, httpClient)
-		if err == nil {
-			break
-		}
-		delay := time.Duration(attempt) * 5 * time.Second
-		if delay > 60*time.Second {
-			delay = 60 * time.Second
-		}
-		log.Warn().Err(err).Dur("retry_in", delay).Int("attempt", attempt).Msg("failed to create telegram bot, retrying")
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-			log.Error().Msg("shutdown requested while waiting for Telegram API")
-			return
-		}
-	}
-
-	if cfg.PersistConversationStates && cfg.EmbedTelegramUpdates {
-		if err := bot.UseMongoStateStore(ctx, mongo.Database(), log); err != nil {
-			log.Error().Err(err).Msg("failed to enable Mongo FSM store; falling back to in-memory")
-		} else {
-			log.Info().Msg("telegram FSM persisted to Mongo (conversation_states)")
-		}
-	}
-
-	// Calendar fetcher uses its own *http.Client so a slow calendar
-	// host can't stall the shared Jira client. The Telegram handler
-	// uses it to validate URLs synchronously on entry.
-	calendarFetchTimeout := parseDurationOrDefault(cfg.CalendarFetchTimeout, calendar.DefaultFetchTimeout, "CALENDAR_FETCH_TIMEOUT", log)
-	calendarFetcher := calendar.NewFetcher(calendarFetchTimeout, calendar.DefaultMaxBytes)
-	bot.SetCalendarSupport(calendarFetcher, calendarEventRepo, cfg.CalendarDefaultReminderMin)
-
-	// Notifier routes the producer-side Send from poller/scheduler/webhook.
-	// When NOTIFY_VIA_EVENTS=true and events are enabled, messages go out
-	// as NotifyRequested and a separate telegram-svc delivers them; default
-	// is direct-send through this bot's tgbotapi client.
-	var telegramNotifier notifier.Notifier
-	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
-		telegramNotifier = notifier.NewEvent(eventPub, log)
-		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
-	} else {
-		telegramNotifier = notifier.NewDirect(bot.API(), log)
-	}
-
-	sched := scheduler.New(scheduleRepo, userRepo, jiraClient, telegramNotifier, log)
-	sched.SetEventPublisher(eventPub)
-
-	bot.SetOnScheduleChange(func() {
-		if err := sched.Reload(context.Background()); err != nil {
-			log.Error().Err(err).Msg("failed to reload schedules")
-		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(web.LandingHTML())
 	})
 
-	pollInterval, err := time.ParseDuration(cfg.PollInterval)
-	if err != nil {
-		log.Warn().Str("value", cfg.PollInterval).Msg("invalid POLL_INTERVAL, using default 30s")
-		pollInterval = 30 * time.Second
-	}
+	// Calendar reminders are delivered as events; telegram-svc is the sole
+	// Telegram sender.
+	calendarNotifier := notifier.NewEvent(eventPub, log)
+
 	batchWindow, err := time.ParseDuration(cfg.BatchWindow)
 	if err != nil {
 		log.Warn().Str("value", cfg.BatchWindow).Msg("invalid BATCH_WINDOW, using default 1m")
@@ -294,10 +241,8 @@ func main() {
 		dedup = memDedup
 	}
 
-	issuePoller := poller.New(subRepo, userRepo, jiraClient, telegramNotifier, log, pollInterval, batchWindow, dedup)
-	issuePoller.SetEventPublisher(eventPub)
-	bot.SetPollerRef(issuePoller)
-
+	calendarFetchTimeout := parseDurationOrDefault(cfg.CalendarFetchTimeout, calendar.DefaultFetchTimeout, "CALENDAR_FETCH_TIMEOUT", log)
+	calendarFetcher := calendar.NewFetcher(calendarFetchTimeout, calendar.DefaultMaxBytes)
 	calendarInterval := parseDurationOrDefault(cfg.CalendarPollInterval, 5*time.Minute, "CALENDAR_POLL_INTERVAL", log)
 	calendarLookahead := parseDurationOrDefault(cfg.CalendarLookahead, 24*time.Hour, "CALENDAR_LOOKAHEAD", log)
 	calendarNewHorizon := parseDurationOrDefault(cfg.CalendarNewHorizon, time.Hour, "CALENDAR_NEW_HORIZON", log)
@@ -307,7 +252,7 @@ func main() {
 		calendarFetcher,
 		calendarpoller.PackageParser{},
 		calendarpoller.PackageExpander{},
-		telegramNotifier,
+		calendarNotifier,
 		dedup,
 		log,
 		calendarInterval,
@@ -316,93 +261,13 @@ func main() {
 		cfg.CalendarDefaultReminderMin,
 	)
 
-	webhookHandler := webhook.NewHandler(subRepo, userRepo, telegramNotifier, cfg.JiraWebhookSecret, cfg.AllowUnsignedWebhooks, log, dedup)
-	webhookHandler.SetEventPublisher(eventPub)
-	eventsFn := webhookHandler.EventsReceived
-	if !cfg.EmbedWebhookServer && cfg.WebhookSvcURL != "" {
-		eventsFn = webhookstats.RemoteFetcher(cfg.WebhookSvcURL, cfg.InternalAuthToken, httpClient, log)
-		log.Info().Str("url", cfg.WebhookSvcURL).Msg("admin stats: events_received sourced from webhook-svc")
-	}
-	bot.SetWebhookStats(webhookRepo, eventsFn)
-
-	callbackServer := jira.NewCallbackServer(ctx, cfg.CallbackAddr, oauthClient, userRepo, subRepo, webhookMgr, bot.API(), log)
-	callbackServer.SetEventPublisher(eventPub)
-	if cfg.EmbedWebhookServer {
-		callbackServer.Handle("/webhook", webhookHandler)
-	} else {
-		log.Info().Msg("webhook ingress handled externally; monolith /webhook route disabled")
-	}
-	callbackServer.HandleFunc("/logo.jpeg", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		_, _ = w.Write(web.LogoJPEG())
-	})
-	callbackServer.HandleFunc("/privacy", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(web.PrivacyHTML())
-	})
-	callbackServer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(web.LandingHTML())
-	})
-
-	bot.SetCallbackServer(callbackServer)
-
 	var wg sync.WaitGroup
 
-	if cfg.EmbedPoller {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			issuePoller.Start(ctx)
-		}()
-	} else {
-		log.Info().Msg("polling handled externally; monolith poller disabled")
-	}
-
-	if cfg.EmbedCalendarPoller {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			calPoller.Start(ctx)
-		}()
-	} else {
-		log.Info().Msg("calendar polling handled externally; monolith calendar poller disabled")
-	}
-
-	if cfg.EmbedTelegramUpdates {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			bot.Start(ctx)
-		}()
-	} else {
-		log.Info().Msg("telegram update-handling handled externally; monolith long-polling disabled")
-	}
-
-	if cfg.EmbedScheduler {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sched.Start(ctx); err != nil {
-				log.Error().Err(err).Msg("scheduler error")
-			}
-		}()
-	} else {
-		log.Info().Msg("scheduling handled externally; monolith scheduler disabled")
-	}
-
-	if cfg.EmbedWebhookServer {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			webhookHandler.Start(ctx)
-		}()
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		calPoller.Start(ctx)
+	}()
 
 	wg.Add(1)
 	go func() {
@@ -413,28 +278,6 @@ func main() {
 		}
 	}()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		log.Info().Str("addr", internalSrv.Addr).Msg("identity lease server listening")
-		if err := internalSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error().Err(err).Msg("identity lease server failed")
-			cancel()
-		}
-	}()
-
-	// Webhook refresher: extends Jira-side webhook lifetime before the
-	// 30-day expiry. Runs once at startup so a long-restarted instance
-	// catches up immediately, then daily. Owned by webhook-svc when
-	// EMBED_WEBHOOK_SERVER=false.
-	if cfg.EmbedWebhookServer {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runWebhookRefresher(ctx, webhookMgr, log)
-		}()
-	}
-
 	<-ctx.Done()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -442,21 +285,10 @@ func main() {
 	if err := callbackServer.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("callback server shutdown error")
 	}
-	if err := internalSrv.Shutdown(shutdownCtx); err != nil {
-		log.Error().Err(err).Msg("identity lease server shutdown error")
-	}
 
 	wg.Wait()
 	log.Info().Msg("SleepJiraBot stopped")
 }
-
-const (
-	webhookRefreshInterval = 24 * time.Hour
-	// webhookRefreshLeadTime is how far before expiry we extend a
-	// webhook. 7 days gives us a generous safety margin so a missed
-	// daily run does not let webhooks lapse.
-	webhookRefreshLeadTime = 7 * 24 * time.Hour
-)
 
 // parseDurationOrDefault is a tiny helper for the calendar-feature env
 // knobs whose schema mirrors POLL_INTERVAL — duration strings parsed at
@@ -472,30 +304,4 @@ func parseDurationOrDefault(raw string, def time.Duration, envName string, log z
 		return def
 	}
 	return d
-}
-
-func runWebhookRefresher(ctx context.Context, mgr *jira.WebhookManager, log zerolog.Logger) {
-	if mgr == nil {
-		return
-	}
-	log.Info().
-		Dur("interval", webhookRefreshInterval).
-		Dur("lead_time", webhookRefreshLeadTime).
-		Msg("webhook refresher started")
-
-	// Initial run on startup so restarts after long downtime catch up.
-	mgr.RefreshExpiring(ctx, time.Now().Add(webhookRefreshLeadTime))
-
-	ticker := time.NewTicker(webhookRefreshInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Info().Msg("webhook refresher stopped")
-			return
-		case <-ticker.C:
-			mgr.RefreshExpiring(ctx, time.Now().Add(webhookRefreshLeadTime))
-		}
-	}
 }

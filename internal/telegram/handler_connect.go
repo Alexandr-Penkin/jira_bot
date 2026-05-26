@@ -83,7 +83,7 @@ func (h *Handler) handleSiteSelectCallback(ctx context.Context, cq *tgbotapi.Cal
 	userID := cq.From.ID
 	lang := h.getLang(ctx, userID)
 
-	if h.callbackServer == nil || len(parts) < 2 {
+	if h.siteConnector == nil || len(parts) < 2 {
 		msg := tgbotapi.NewMessage(cq.Message.Chat.ID, locale.T(lang, "error.generic"))
 		_, _ = h.api.Send(msg)
 		return
@@ -96,7 +96,13 @@ func (h *Handler) handleSiteSelectCallback(ctx context.Context, cq *tgbotapi.Cal
 		return
 	}
 
-	pending := h.callbackServer.ConsumePendingSite(userID)
+	pending, err := h.siteConnector.ConsumePending(ctx, userID)
+	if err != nil {
+		h.log.Error().Err(err).Msg("failed to read pending site selection")
+		msg := tgbotapi.NewMessage(cq.Message.Chat.ID, locale.T(lang, "error.generic"))
+		_, _ = h.api.Send(msg)
+		return
+	}
 	if pending == nil {
 		msg := tgbotapi.NewMessage(cq.Message.Chat.ID, locale.T(lang, "connect.site_expired"))
 		_, _ = h.api.Send(msg)
@@ -110,7 +116,7 @@ func (h *Handler) handleSiteSelectCallback(ctx context.Context, cq *tgbotapi.Cal
 	}
 
 	resource := pending.Resources[idx]
-	if err = h.callbackServer.FinalizeSiteConnection(ctx, userID, pending.TokenResponse, resource); err != nil {
+	if err = h.siteConnector.Finalize(ctx, userID, pending.TokenResponse, resource); err != nil {
 		h.log.Error().Err(err).Msg("failed to finalize site connection")
 		msg := tgbotapi.NewMessage(cq.Message.Chat.ID, locale.T(lang, "error.generic"))
 		_, _ = h.api.Send(msg)

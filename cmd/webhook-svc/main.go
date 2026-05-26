@@ -1,13 +1,12 @@
-// Command webhook-svc is the Phase-1 extraction of Jira webhook ingress
-// from the SleepJiraBot monolith. It shares Mongo and NATS with the bot
-// process and owns:
+// Command webhook-svc owns Jira webhook ingress for the SleepJiraBot
+// microservice fleet. It shares Mongo and NATS with the rest of the fleet
+// and owns:
 //   - POST /webhook HTTP endpoint (HMAC verify, publish WebhookReceived,
-//     fan-out, publish WebhookNormalized)
+//     fan-out as NotifyRequested events, publish WebhookNormalized)
 //   - Jira-side webhook registration refresher (24h)
 //
-// The monolith keeps embedded webhook ingress until EMBED_WEBHOOK_SERVER
-// is set to false, so running webhook-svc is additive: redirect Jira
-// webhook URLs to the webhook-svc address and toggle the flag off.
+// It is the only binary that serves /webhook, so it validates webhook
+// auth itself at startup and leases Jira tokens from identity-svc.
 package main
 
 import (
@@ -27,21 +26,17 @@ import (
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
-	"SleepJiraBot/internal/identity"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
 	"SleepJiraBot/internal/webhook"
-	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
 	"SleepJiraBot/pkg/telemetry"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const (
@@ -116,29 +111,23 @@ func main() {
 	subRepo := storage.NewSubscriptionRepo(mongo.Database())
 	webhookRepo := storage.NewWebhookRepo(mongo.Database())
 
-	// Event publisher is required for this service: its purpose is to
-	// publish WebhookReceived / WebhookNormalized. Missing NATS is fatal.
-	if !cfg.EnableEventPublish {
-		log.Warn().Msg("ENABLE_EVENT_PUBLISH is false; webhook-svc still runs but downstream consumers will not see events")
+	// The event bus is mandatory: webhook-svc exists to publish
+	// WebhookReceived / WebhookNormalized and to fan out reminders as
+	// NotifyRequested events. A NATS connection failure is fatal.
+	jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
+	if err != nil {
+		log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
+		return
 	}
-	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
-	var natsPub *natsx.JetStreamPublisher
-	if cfg.EnableEventPublish {
-		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
-		if err != nil {
-			log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
-			return
-		}
-		if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
-			log.Error().Err(err).Msg("failed to ensure JetStream streams")
-			_ = jsPub.Close()
-			return
-		}
-		eventPub = jsPub
-		natsPub = jsPub
-		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
-		defer func() { _ = jsPub.Close() }()
+	if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
+		log.Error().Err(err).Msg("failed to ensure JetStream streams")
+		_ = jsPub.Close()
+		return
 	}
+	defer func() { _ = jsPub.Close() }()
+	log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
+	eventPub := jsPub
+	natsPub := jsPub
 	subRepo.SetEventPublisher(eventPub)
 	userRepo.SetEventPublisher(eventPub)
 
@@ -160,48 +149,27 @@ func main() {
 	jiraClient.SetEventPublisher(eventPub)
 	jiraClient.StartCleanup(ctx)
 
-	// Token custody: prefer remote identity-svc when IDENTITY_SVC_URL is
-	// set, otherwise run an in-process LocalProvider against the shared
-	// Mongo. Both satisfy jira.TokenProvider; the remote path is what
-	// Phase-2b points at once identity-svc is deployed.
-	var tokenProvider jira.TokenProvider
-	if cfg.IdentitySvcURL != "" {
-		remote, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
-		if err != nil {
-			log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
-			return
-		}
-		tokenProvider = remote
-		log.Info().Str("url", cfg.IdentitySvcURL).Msg("using remote identity-svc for token lease")
-	} else {
-		local := identity.NewLocalProvider(userRepo, oauthClient, log)
-		local.SetEventPublisher(eventPub)
-		tokenProvider = local
-		log.Info().Msg("using in-process local token provider")
+	// Jira tokens are leased from identity-svc so it is the single refresh
+	// owner across the fleet — webhook-svc never needs the OAuth secret to
+	// refresh.
+	if cfg.IdentitySvcURL == "" {
+		log.Error().Msg("IDENTITY_SVC_URL is required: Jira tokens are leased from identity-svc")
+		return
+	}
+	tokenProvider, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
+	if err != nil {
+		log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
+		return
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
+	log.Info().Str("url", cfg.IdentitySvcURL).Msg("leasing Jira tokens from identity-svc")
 
 	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, cfg.JiraWebhookURL, log)
 
-	// webhook-svc delivers notifications via the notifier seam: when
-	// NOTIFY_VIA_EVENTS is on, it publishes NotifyRequested events and a
-	// separate telegram-svc delivers; otherwise it direct-sends through
-	// its own tgbotapi client (the same code path the monolith uses when
-	// EMBED_WEBHOOK_SERVER=true).
-	var sendNotifier notifier.Notifier
-	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
-		sendNotifier = notifier.NewEvent(eventPub, log)
-		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
-	} else {
-		var tgAPI *tgbotapi.BotAPI
-		if cfg.TelegramToken != "" {
-			tgAPI, err = tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
-			if err != nil {
-				log.Warn().Err(err).Msg("webhook-svc: Telegram API init failed; direct Telegram sends disabled")
-			}
-		}
-		sendNotifier = notifier.NewDirect(tgAPI, log)
-	}
+	// webhook-svc fans out notifications as NotifyRequested events;
+	// telegram-svc is the sole Telegram sender.
+	sendNotifier := notifier.NewEvent(eventPub, log)
+	log.Info().Msg("notifier: publishing NotifyRequested events; telegram-svc delivers")
 
 	batchWindow, err := time.ParseDuration(cfg.BatchWindow)
 	if err != nil {
@@ -335,7 +303,7 @@ func newStatsHandler(wh *webhook.Handler, repo *storage.WebhookRepo, authToken s
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"events_received":%d,"webhook_count":%d}`, wh.EventsReceived(), webhookCount)
+		_, _ = fmt.Fprintf(w, `{"events_received":%d,"webhook_count":%d}`, wh.EventsReceived(), webhookCount)
 	})
 }
 

@@ -131,79 +131,6 @@ func TestGetEnvOrDefault(t *testing.T) {
 	assert.Equal(t, "default", getEnvOrDefault("TEST_KEY_DOES_NOT_EXIST", "default"))
 }
 
-func TestLoad_EmbedFlagsDefaultTrue(t *testing.T) {
-	// All three Embed* flags must default to true so that operators who
-	// have never touched these env vars keep running the monolith as-is.
-	setRequiredEnv(t)
-	os.Unsetenv("EMBED_WEBHOOK_SERVER")
-	os.Unsetenv("EMBED_POLLER")
-	os.Unsetenv("EMBED_SCHEDULER")
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.True(t, cfg.EmbedWebhookServer)
-	assert.True(t, cfg.EmbedPoller)
-	assert.True(t, cfg.EmbedScheduler)
-}
-
-func TestLoad_EmbedFlagsDisabled(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("EMBED_WEBHOOK_SERVER", "false")
-	t.Setenv("EMBED_POLLER", "false")
-	t.Setenv("EMBED_SCHEDULER", "0")
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.False(t, cfg.EmbedWebhookServer)
-	assert.False(t, cfg.EmbedPoller)
-	assert.False(t, cfg.EmbedScheduler)
-}
-
-func TestLoad_EmbedPollerInvalid(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("EMBED_POLLER", "maybe")
-
-	cfg, err := Load()
-	assert.Nil(t, cfg)
-	assert.EqualError(t, err, "EMBED_POLLER must be a boolean (true/false/1/0)")
-}
-
-func TestLoad_EmbedSchedulerInvalid(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("EMBED_SCHEDULER", "nope")
-
-	cfg, err := Load()
-	assert.Nil(t, cfg)
-	assert.EqualError(t, err, "EMBED_SCHEDULER must be a boolean (true/false/1/0)")
-}
-
-func TestLoad_EmbedWebhookServerInvalid(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("EMBED_WEBHOOK_SERVER", "banana")
-
-	cfg, err := Load()
-	assert.Nil(t, cfg)
-	assert.EqualError(t, err, "EMBED_WEBHOOK_SERVER must be a boolean (true/false/1/0)")
-}
-
-func TestLoad_EnableEventPublishInvalid(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("ENABLE_EVENT_PUBLISH", "kinda")
-
-	cfg, err := Load()
-	assert.Nil(t, cfg)
-	assert.EqualError(t, err, "ENABLE_EVENT_PUBLISH must be a boolean (true/false/1/0)")
-}
-
-func TestLoad_EnableEventPublishParsed(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("ENABLE_EVENT_PUBLISH", "true")
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.True(t, cfg.EnableEventPublish)
-}
-
 func TestLoad_IdentitySvcWiring(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("IDENTITY_SVC_URL", "http://identity-svc:9080")
@@ -275,22 +202,6 @@ func TestLoad_AdminTelegramIDEmptyLeavesZero(t *testing.T) {
 	assert.Equal(t, int64(0), cfg.AdminTelegramID)
 }
 
-func TestLoad_WebhookSecretRequiredWhenEmbedded(t *testing.T) {
-	// Default EMBED_WEBHOOK_SERVER=true; an empty secret without an
-	// explicit opt-in must refuse to start so the monolith never
-	// exposes /webhook with unauthenticated ingress.
-	t.Setenv("TELEGRAM_TOKEN", "test-token")
-	t.Setenv("JIRA_CLIENT_ID", "cid")
-	t.Setenv("JIRA_CLIENT_SECRET", "csecret")
-	t.Setenv("ENCRYPTION_KEY", testEncryptionKey)
-	t.Setenv("JIRA_WEBHOOK_SECRET", "")
-	os.Unsetenv("ALLOW_UNSIGNED_WEBHOOKS")
-
-	cfg, err := Load()
-	assert.Nil(t, cfg)
-	assert.ErrorContains(t, err, "JIRA_WEBHOOK_SECRET is empty")
-}
-
 func TestLoad_WebhookSecretAllowedWithOptIn(t *testing.T) {
 	// Operators who explicitly accept the risk can keep running unsigned.
 	t.Setenv("TELEGRAM_TOKEN", "test-token")
@@ -306,19 +217,20 @@ func TestLoad_WebhookSecretAllowedWithOptIn(t *testing.T) {
 	assert.Empty(t, cfg.JiraWebhookSecret)
 }
 
-func TestLoad_WebhookSecretCheckSkippedWhenNotEmbedded(t *testing.T) {
-	// When EMBED_WEBHOOK_SERVER=false the monolith doesn't expose
-	// /webhook, so the missing secret is not its problem — webhook-svc
-	// has its own ValidateWebhookAuth check.
-	t.Setenv("TELEGRAM_TOKEN", "test-token")
-	t.Setenv("JIRA_CLIENT_ID", "cid")
-	t.Setenv("JIRA_CLIENT_SECRET", "csecret")
-	t.Setenv("ENCRYPTION_KEY", testEncryptionKey)
-	t.Setenv("JIRA_WEBHOOK_SECRET", "")
-	t.Setenv("EMBED_WEBHOOK_SERVER", "false")
-	os.Unsetenv("ALLOW_UNSIGNED_WEBHOOKS")
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.False(t, cfg.EmbedWebhookServer)
+func TestValidateWebhookAuth(t *testing.T) {
+	// webhook-svc is the only binary that serves /webhook and calls this
+	// directly at startup. A missing secret without an explicit opt-in
+	// must fail closed; a secret or the opt-in passes.
+	t.Run("empty secret, no opt-in -> error", func(t *testing.T) {
+		c := &Config{JiraWebhookSecret: "", AllowUnsignedWebhooks: false}
+		assert.ErrorContains(t, c.ValidateWebhookAuth(), "JIRA_WEBHOOK_SECRET is empty")
+	})
+	t.Run("secret set -> ok", func(t *testing.T) {
+		c := &Config{JiraWebhookSecret: "s3cret"}
+		assert.NoError(t, c.ValidateWebhookAuth())
+	})
+	t.Run("opt-in unsigned -> ok", func(t *testing.T) {
+		c := &Config{JiraWebhookSecret: "", AllowUnsignedWebhooks: true}
+		assert.NoError(t, c.ValidateWebhookAuth())
+	})
 }

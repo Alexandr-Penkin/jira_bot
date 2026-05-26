@@ -47,8 +47,8 @@ func (b *Bot) API() *tgbotapi.BotAPI {
 	return b.api
 }
 
-func (b *Bot) SetCallbackServer(cs *jira.CallbackServer) {
-	b.handler.SetCallbackServer(cs)
+func (b *Bot) SetSiteConnector(sc *jira.SiteConnector) {
+	b.handler.SetSiteConnector(sc)
 }
 
 func (b *Bot) SetPollerRef(p *poller.Poller) {
