@@ -32,6 +32,7 @@ const (
 	defaultInterval       = 5 * time.Minute
 	defaultLookahead      = 24 * time.Hour
 	defaultReminderMins   = 15
+	defaultNewHorizon     = 1 * time.Hour
 	fetchTimeout          = 30 * time.Second
 	staleInstanceLookback = 7 * 24 * time.Hour
 )
@@ -76,6 +77,7 @@ type Poller struct {
 	interval            time.Duration
 	lookahead           time.Duration
 	defaultReminderMins int
+	newHorizon          time.Duration
 	mu                  sync.Mutex
 	lastPollAt          time.Time
 }
@@ -91,7 +93,7 @@ func New(
 	notif notifier.Notifier,
 	dedup notifydedup.Allower,
 	log zerolog.Logger,
-	interval, lookahead time.Duration,
+	interval, lookahead, newHorizon time.Duration,
 	defaultReminderMin int,
 ) *Poller {
 	if interval <= 0 {
@@ -102,6 +104,9 @@ func New(
 	}
 	if defaultReminderMin <= 0 {
 		defaultReminderMin = defaultReminderMins
+	}
+	if newHorizon <= 0 {
+		newHorizon = defaultNewHorizon
 	}
 	return &Poller{
 		userRepo:            userRepo,
@@ -115,6 +120,7 @@ func New(
 		interval:            interval,
 		lookahead:           lookahead,
 		defaultReminderMins: defaultReminderMin,
+		newHorizon:          newHorizon,
 	}
 }
 
@@ -266,13 +272,14 @@ func (p *Poller) pollUser(ctx context.Context, user *storage.User) {
 		}
 
 		// "New event" notification. Only fire when the event is still
-		// in the future at the moment of inspection — sending "🆕 New
-		// event" after the event already started is confusing (users
-		// reported reading it as "your meeting starts now" when it
-		// actually started two minutes ago, which is the polling
-		// latency surfacing as a usability bug).
-		newEventInFuture := inst.Start.After(now)
-		if !firstFetch && change.Created && newEventInFuture {
+		// in the future AND within the configured `newHorizon` — users
+		// reported being pinged for every meeting that landed in the
+		// next 24h of their feed, which spams them about tomorrow's
+		// stand-ups they already know about. Events further out are
+		// still recorded in state, so the regular "starts in N min"
+		// reminder kicks in when the time comes.
+		inWindow := inst.Start.After(now) && inst.Start.Sub(now) <= p.newHorizon
+		if !firstFetch && change.Created && inWindow {
 			if p.allow(user.TelegramUserID, "new", inst) {
 				if err := p.sendNew(ctx, user, lang, inst); err != nil {
 					p.log.Warn().Err(err).Msg("calendar poller: send new failed")
@@ -280,6 +287,13 @@ func (p *Poller) pollUser(ctx context.Context, user *storage.User) {
 					_ = p.eventRepo.MarkNotifiedNew(ctx, user.TelegramUserID, inst.UID, inst.Start.Unix())
 				}
 			}
+		} else if !firstFetch && change.Created {
+			// Beyond the new-event horizon we silently record the
+			// event so we don't re-evaluate it on every subsequent
+			// tick — but never resurrect it as "new" once we cross
+			// into the horizon either: the reminder is the right
+			// signal at that point.
+			_ = p.eventRepo.MarkNotifiedNew(ctx, user.TelegramUserID, inst.UID, inst.Start.Unix())
 		}
 
 		// "Event changed" notification.

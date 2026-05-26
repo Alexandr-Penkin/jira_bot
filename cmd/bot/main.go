@@ -300,6 +300,7 @@ func main() {
 
 	calendarInterval := parseDurationOrDefault(cfg.CalendarPollInterval, 5*time.Minute, "CALENDAR_POLL_INTERVAL", log)
 	calendarLookahead := parseDurationOrDefault(cfg.CalendarLookahead, 24*time.Hour, "CALENDAR_LOOKAHEAD", log)
+	calendarNewHorizon := parseDurationOrDefault(cfg.CalendarNewHorizon, time.Hour, "CALENDAR_NEW_HORIZON", log)
 	calPoller := calendarpoller.New(
 		userRepo,
 		calendarEventRepo,
@@ -311,6 +312,7 @@ func main() {
 		log,
 		calendarInterval,
 		calendarLookahead,
+		calendarNewHorizon,
 		cfg.CalendarDefaultReminderMin,
 	)
 

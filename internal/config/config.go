@@ -166,6 +166,13 @@ type Config struct {
 	CalendarLookahead          string
 	CalendarFetchTimeout       string
 	CalendarDefaultReminderMin int
+	// CalendarNewHorizon caps which freshly-discovered events trigger
+	// a "🆕 New event" Telegram notification. Set to a short window so
+	// the user doesn't get pinged about every meeting added to the
+	// next 24h of their calendar — those still show up in the regular
+	// "starts in N min" reminder when the time comes. Empty/invalid
+	// falls back to 1h.
+	CalendarNewHorizon string
 }
 
 func Load() (*Config, error) {
@@ -206,6 +213,7 @@ func Load() (*Config, error) {
 		CalendarPollInterval:       getEnvOrDefault("CALENDAR_POLL_INTERVAL", "5m"),
 		CalendarLookahead:          getEnvOrDefault("CALENDAR_LOOKAHEAD", "24h"),
 		CalendarFetchTimeout:       getEnvOrDefault("CALENDAR_FETCH_TIMEOUT", "30s"),
+		CalendarNewHorizon:         getEnvOrDefault("CALENDAR_NEW_HORIZON", "1h"),
 		CalendarDefaultReminderMin: 15,
 	}
 

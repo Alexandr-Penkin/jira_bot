@@ -179,7 +179,9 @@ func (stubExpander) ApplyOverrides(in []calendar.Instance, _ []calendar.Event) [
 
 func newTestPoller(t *testing.T, ur *fakeUserRepo, er storage.CalendarEventRepo, fetcher Fetcher, parser Parser, notif notifier.Notifier) *Poller {
 	t.Helper()
-	return New(ur, er, fetcher, parser, stubExpander{}, notif, nil, zerolog.Nop(), time.Minute, time.Hour, 15)
+	// newHorizon=time.Hour matches the default — every test event in this
+	// suite is scheduled within an hour of "now".
+	return New(ur, er, fetcher, parser, stubExpander{}, notif, nil, zerolog.Nop(), time.Minute, time.Hour, time.Hour, 15)
 }
 
 func TestPoller_FirstFetchSuppressesNewNotifications(t *testing.T) {
@@ -202,6 +204,36 @@ func TestPoller_FirstFetchSuppressesNewNotifications(t *testing.T) {
 
 	require.Empty(t, notif.requests, "first-poll backfill must not send 'new event' notifications")
 	require.Equal(t, 1, ur.markedSuccess)
+}
+
+func TestPoller_NewEventBeyondHorizonSuppressed(t *testing.T) {
+	user := storage.User{
+		TelegramUserID:        42,
+		CalendarURL:           "https://x.test/cal.ics",
+		CalendarNotifyEnabled: true,
+		CalendarLastFetchedAt: time.Now().Unix() - 600,
+	}
+	ur := &fakeUserRepo{users: []storage.User{user}}
+	er := newMemEventRepo()
+	notif := &recordingNotifier{}
+
+	// Event starts in 3 hours — comfortably past the default 1h
+	// horizon used by newTestPoller; "🆕" must NOT fire.
+	events := []calendar.Event{
+		{UID: "far", Summary: "Tomorrow's meeting", Start: time.Now().Add(3 * time.Hour)},
+	}
+	p := newTestPoller(t, ur, er, stubFetcher{body: []byte("ok")}, stubParser{events: events}, notif)
+	// Widen lookahead so the stub expander surfaces the event; the
+	// horizon guard, not the lookahead, is what should suppress "new".
+	p.lookahead = 24 * time.Hour
+	p.pollAll(context.Background())
+
+	require.Empty(t, notif.reasons(), "events outside newHorizon must not trigger 🆕")
+	// And the state must be marked so a follow-up tick doesn't
+	// surface it as new either.
+	state, _ := er.GetByUserAndInstance(context.Background(), 42, "far", events[0].Start.Unix())
+	require.NotNil(t, state)
+	require.True(t, state.NotifiedNew)
 }
 
 func TestPoller_NewEventOnSecondTick(t *testing.T) {
