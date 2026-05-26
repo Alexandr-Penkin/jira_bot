@@ -27,8 +27,8 @@ func (h *Handler) handleCalendarMenu(ctx context.Context, chatID, userID int64, 
 	lang := h.getLang(ctx, userID)
 	user, _ := h.userRepo.GetByTelegramID(ctx, userID)
 
-	text := locale.T(lang, "calendar.menu.title", calendarStatusBlock(user, lang))
-	keyboard := calendarMenuKeyboard(user, lang)
+	text := locale.T(lang, "calendar.menu.title", calendarStatusBlock(user, lang, h.calendarDefaultMins))
+	keyboard := calendarMenuKeyboard(user, lang, h.calendarDefaultMins)
 
 	if msgID != 0 {
 		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, keyboard)
@@ -43,7 +43,7 @@ func (h *Handler) handleCalendarMenu(ctx context.Context, chatID, userID int64, 
 	h.sendMessage(msg)
 }
 
-func calendarStatusBlock(user *storage.User, lang locale.Lang) string {
+func calendarStatusBlock(user *storage.User, lang locale.Lang, defaultMins int) string {
 	if user == nil || user.CalendarURL == "" {
 		return locale.T(lang, "calendar.status.unset")
 	}
@@ -51,10 +51,7 @@ func calendarStatusBlock(user *storage.User, lang locale.Lang) string {
 	if !user.CalendarNotifyEnabled {
 		statusToggle = locale.T(lang, "calendar.status.disabled")
 	}
-	mins := user.CalendarReminderMinutes
-	if mins == 0 {
-		mins = storage.DefaultCalendarReminderMinutes
-	}
+	mins := effectiveReminderMins(user, defaultMins)
 	out := locale.T(lang, "calendar.status.set", statusToggle, mins)
 	if user.CalendarLastError != "" {
 		out += locale.T(lang, "calendar.status.last_error", format.EscapeMarkdown(user.CalendarLastError))
@@ -62,7 +59,7 @@ func calendarStatusBlock(user *storage.User, lang locale.Lang) string {
 	return out
 }
 
-func calendarMenuKeyboard(user *storage.User, lang locale.Lang) tgbotapi.InlineKeyboardMarkup {
+func calendarMenuKeyboard(user *storage.User, lang locale.Lang, _ int) tgbotapi.InlineKeyboardMarkup {
 	hasURL := user != nil && user.CalendarURL != ""
 	toggleLabel := locale.T(lang, "calendar.btn.toggle_on")
 	if user != nil && user.CalendarNotifyEnabled {
@@ -81,11 +78,13 @@ func calendarMenuKeyboard(user *storage.User, lang locale.Lang) tgbotapi.InlineK
 				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.remove"), "cal:remove"),
 			},
 			[]tgbotapi.InlineKeyboardButton{
+				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.rem_5"), "cal:rem:5"),
 				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.rem_15"), "cal:rem:15"),
 				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.rem_30"), "cal:rem:30"),
 				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.rem_60"), "cal:rem:60"),
 			},
 			[]tgbotapi.InlineKeyboardButton{
+				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.rem_default"), "cal:rem:0"),
 				tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "calendar.btn.rem_custom"), "cal:reminput"),
 			},
 		)
@@ -94,6 +93,19 @@ func calendarMenuKeyboard(user *storage.User, lang locale.Lang) tgbotapi.InlineK
 		tgbotapi.NewInlineKeyboardButtonData(locale.T(lang, "btn.back"), "m:profile"),
 	})
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// effectiveReminderMins returns the lead time the bot will actually
+// use for this user: an explicit override when set, otherwise the env
+// default. Centralised so the UI and the summary line agree.
+func effectiveReminderMins(user *storage.User, defaultMins int) int {
+	if user != nil && user.CalendarReminderMinutes > 0 {
+		return user.CalendarReminderMinutes
+	}
+	if defaultMins > 0 {
+		return defaultMins
+	}
+	return storage.DefaultCalendarReminderMinutes
 }
 
 // handleCalendarSubCallback dispatches "cal:*" callbacks: URL prompt,
@@ -125,7 +137,12 @@ func (h *Handler) handleCalendarSubCallback(ctx context.Context, cq *tgbotapi.Ca
 			return
 		}
 		mins, err := strconv.Atoi(parts[2])
-		if err != nil || mins <= 0 {
+		if err != nil {
+			return
+		}
+		// `0` means "clear override, use env default". Stored as 0 in
+		// Mongo so the poller's fallback to defaultReminderMins kicks in.
+		if mins < 0 {
 			return
 		}
 		if err := h.userRepo.SetCalendarReminderMinutes(ctx, userID, mins); err != nil {
@@ -227,13 +244,10 @@ func (h *Handler) handleCalendarRemove(ctx context.Context, chatID, userID int64
 
 // calendarSummaryLine appends a one-line "📅 Calendar: ..." entry to
 // the /me profile output. Empty when the user has no calendar.
-func calendarSummaryLine(user *storage.User, lang locale.Lang) string {
+func calendarSummaryLine(user *storage.User, lang locale.Lang, defaultMins int) string {
 	if user == nil || user.CalendarURL == "" {
 		return ""
 	}
-	mins := user.CalendarReminderMinutes
-	if mins == 0 {
-		mins = storage.DefaultCalendarReminderMinutes
-	}
+	mins := effectiveReminderMins(user, defaultMins)
 	return fmt.Sprintf(locale.T(lang, "me.calendar.connected"), mins)
 }

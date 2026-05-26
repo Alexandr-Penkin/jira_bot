@@ -176,7 +176,7 @@ func (h *Handler) handleMe(ctx context.Context, chatID, userID int64) tgbotapi.M
 	}
 	text += locale.T(lang, "spfield.current", format.EscapeMarkdown(spFieldLabel))
 
-	text += calendarSummaryLine(user, lang)
+	text += calendarSummaryLine(user, lang, h.calendarDefaultMins)
 
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown

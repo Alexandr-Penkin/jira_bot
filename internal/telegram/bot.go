@@ -64,8 +64,8 @@ func (b *Bot) SetOnScheduleChange(fn func()) {
 }
 
 // SetCalendarSupport forwards to Handler.SetCalendarSupport.
-func (b *Bot) SetCalendarSupport(fetcher *calendar.Fetcher, events storage.CalendarEventRepo) {
-	b.handler.SetCalendarSupport(fetcher, events)
+func (b *Bot) SetCalendarSupport(fetcher *calendar.Fetcher, events storage.CalendarEventRepo, defaultMins int) {
+	b.handler.SetCalendarSupport(fetcher, events, defaultMins)
 }
 
 // UseMongoStateStore swaps the default in-memory FSM store for a

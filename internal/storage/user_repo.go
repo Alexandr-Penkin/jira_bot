@@ -536,9 +536,12 @@ func (r *UserRepo) SetCalendarURL(ctx context.Context, telegramUserID int64, raw
 		return fmt.Errorf("encrypt calendar url: %w", err)
 	}
 
-	// Read current state so we only seed defaults on the first set,
-	// otherwise an SetCalendarURL after a toggle-off would silently
-	// turn notifications back on.
+	// Read current state so we only seed `enabled=true` on the first
+	// set — otherwise an SetCalendarURL after a toggle-off would
+	// silently turn notifications back on. We intentionally do NOT
+	// seed `calendar_reminder_minutes`: keeping it absent (zero) means
+	// "use CALENDAR_DEFAULT_REMINDER_MIN from env", so an operator can
+	// change the default without each user re-saving their URL.
 	var existing User
 	getErr := r.coll.FindOne(ctx, filter).Decode(&existing)
 
@@ -548,9 +551,8 @@ func (r *UserRepo) SetCalendarURL(ctx context.Context, telegramUserID int64, raw
 		"calendar_last_error":      "",
 		"modified_ts":              now,
 	}
-	if errors.Is(getErr, mongo.ErrNoDocuments) || existing.CalendarReminderMinutes == 0 {
+	if errors.Is(getErr, mongo.ErrNoDocuments) || existing.CalendarURL == "" {
 		setDoc["calendar_notify_enabled"] = true
-		setDoc["calendar_reminder_minutes"] = DefaultCalendarReminderMinutes
 	}
 
 	update := bson.M{
@@ -580,11 +582,13 @@ func (r *UserRepo) SetCalendarNotifyEnabled(ctx context.Context, telegramUserID 
 }
 
 // SetCalendarReminderMinutes records the lead time the user wants
-// before each event. Clamped to a sane [1, 1440] range so a bad input
-// cannot turn the poller into a degenerate burst-sender.
+// before each event. Clamped to a sane [0, 1440] range. A `0` value
+// is intentional: it means "no explicit override, use the env-supplied
+// default", and the poller treats `<=0` as fall-back to its configured
+// defaultReminderMins.
 func (r *UserRepo) SetCalendarReminderMinutes(ctx context.Context, telegramUserID int64, mins int) error {
-	if mins < 1 {
-		mins = 1
+	if mins < 0 {
+		mins = 0
 	}
 	if mins > 1440 {
 		mins = 1440

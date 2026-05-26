@@ -465,7 +465,7 @@ func startUpdateHandler(
 	if perr != nil || calFetchTimeout <= 0 {
 		calFetchTimeout = calendar.DefaultFetchTimeout
 	}
-	bot.SetCalendarSupport(calendar.NewFetcher(calFetchTimeout, calendar.DefaultMaxBytes), calendarEventRepo)
+	bot.SetCalendarSupport(calendar.NewFetcher(calFetchTimeout, calendar.DefaultMaxBytes), calendarEventRepo, cfg.CalendarDefaultReminderMin)
 
 	if cfg.PersistConversationStates {
 		if err := bot.UseMongoStateStore(ctx, mongoClient.Database(), log); err != nil {

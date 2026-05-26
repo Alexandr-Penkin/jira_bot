@@ -241,7 +241,7 @@ func main() {
 	// uses it to validate URLs synchronously on entry.
 	calendarFetchTimeout := parseDurationOrDefault(cfg.CalendarFetchTimeout, calendar.DefaultFetchTimeout, "CALENDAR_FETCH_TIMEOUT", log)
 	calendarFetcher := calendar.NewFetcher(calendarFetchTimeout, calendar.DefaultMaxBytes)
-	bot.SetCalendarSupport(calendarFetcher, calendarEventRepo)
+	bot.SetCalendarSupport(calendarFetcher, calendarEventRepo, cfg.CalendarDefaultReminderMin)
 
 	// Notifier routes the producer-side Send from poller/scheduler/webhook.
 	// When NOTIFY_VIA_EVENTS=true and events are enabled, messages go out

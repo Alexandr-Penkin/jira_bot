@@ -265,8 +265,14 @@ func (p *Poller) pollUser(ctx context.Context, user *storage.User) {
 			continue
 		}
 
-		// "New event" notification.
-		if !firstFetch && change.Created && inst.Start.After(now) {
+		// "New event" notification. Only fire when the event is still
+		// in the future at the moment of inspection — sending "🆕 New
+		// event" after the event already started is confusing (users
+		// reported reading it as "your meeting starts now" when it
+		// actually started two minutes ago, which is the polling
+		// latency surfacing as a usability bug).
+		newEventInFuture := inst.Start.After(now)
+		if !firstFetch && change.Created && newEventInFuture {
 			if p.allow(user.TelegramUserID, "new", inst) {
 				if err := p.sendNew(ctx, user, lang, inst); err != nil {
 					p.log.Warn().Err(err).Msg("calendar poller: send new failed")
@@ -329,6 +335,7 @@ func (p *Poller) sendNew(ctx context.Context, user *storage.User, lang locale.La
 	if inst.Location != "" {
 		text += "\n" + locale.T(lang, "calendar.field.where") + ": " + inst.Location
 	}
+	text += renderDescription(lang, inst.Description)
 	return p.notif.Send(ctx, notifier.Request{
 		ChatID:                user.TelegramUserID,
 		TelegramID:            user.TelegramUserID,
@@ -355,6 +362,7 @@ func (p *Poller) sendChanged(ctx context.Context, user *storage.User, lang local
 	}
 	when := formatInstanceWhen(inst, lang)
 	text := locale.T(lang, "calendar.notif.changed", inst.Summary, when, diff.String())
+	text += renderDescription(lang, inst.Description)
 	return p.notif.Send(ctx, notifier.Request{
 		ChatID:                user.TelegramUserID,
 		TelegramID:            user.TelegramUserID,
@@ -372,6 +380,7 @@ func (p *Poller) sendReminder(ctx context.Context, user *storage.User, lang loca
 		loc = "\n" + locale.T(lang, "calendar.field.where") + ": " + inst.Location
 	}
 	text := locale.T(lang, "calendar.notif.reminder", inst.Summary, minsBefore, loc)
+	text += renderDescription(lang, inst.Description)
 	return p.notif.Send(ctx, notifier.Request{
 		ChatID:                user.TelegramUserID,
 		TelegramID:            user.TelegramUserID,
@@ -390,4 +399,30 @@ func formatInstanceWhen(inst *calendar.Instance, _ locale.Lang) string {
 		return inst.Start.Format("2006-01-02")
 	}
 	return inst.Start.Format("2006-01-02 15:04 MST")
+}
+
+// descriptionMaxRunes caps the rendered description per notification.
+// Telegram messages are limited to 4096 chars and we already spend a
+// few hundred on summary/when/location; 500 keeps the body readable
+// without hitting the cap on calendars that paste long agendas.
+const descriptionMaxRunes = 500
+
+// renderDescription returns the localised description block to append
+// to a notification body. Returns empty when the description is
+// blank. ICS DESCRIPTION values commonly carry escaped "\n" / "\," —
+// unescape them so the user sees a real newline instead of "\n".
+func renderDescription(lang locale.Lang, desc string) string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return ""
+	}
+	desc = strings.ReplaceAll(desc, `\n`, "\n")
+	desc = strings.ReplaceAll(desc, `\,`, ",")
+	desc = strings.ReplaceAll(desc, `\;`, ";")
+	desc = strings.ReplaceAll(desc, `\\`, `\`)
+
+	if runes := []rune(desc); len(runes) > descriptionMaxRunes {
+		desc = string(runes[:descriptionMaxRunes]) + "…"
+	}
+	return "\n" + locale.T(lang, "calendar.field.description") + ": " + desc
 }

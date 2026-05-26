@@ -39,36 +39,42 @@ const (
 )
 
 type Handler struct {
-	api              *tgbotapi.BotAPI
-	oauth            *jira.OAuthClient
-	jiraAPI          *jira.Client
-	callbackServer   *jira.CallbackServer
-	userRepo         *storage.UserRepo
-	prefs            preferences.Provider
-	subRepo          *storage.SubscriptionRepo
-	scheduleRepo     *storage.ScheduleRepo
-	webhookMgr       *jira.WebhookManager
-	templateRepo     *storage.TemplateRepo
-	onScheduleChange func()
-	log              zerolog.Logger
-	states           *stateManager
-	adminID          int64
-	pollerRef        *poller.Poller
-	webhookRepo      *storage.WebhookRepo
-	webhookEvents    func() int64
-	httpClient       *http.Client
-	calendarFetcher  *calendar.Fetcher
-	calendarEvents   storage.CalendarEventRepo
+	api                 *tgbotapi.BotAPI
+	oauth               *jira.OAuthClient
+	jiraAPI             *jira.Client
+	callbackServer      *jira.CallbackServer
+	userRepo            *storage.UserRepo
+	prefs               preferences.Provider
+	subRepo             *storage.SubscriptionRepo
+	scheduleRepo        *storage.ScheduleRepo
+	webhookMgr          *jira.WebhookManager
+	templateRepo        *storage.TemplateRepo
+	onScheduleChange    func()
+	log                 zerolog.Logger
+	states              *stateManager
+	adminID             int64
+	pollerRef           *poller.Poller
+	webhookRepo         *storage.WebhookRepo
+	webhookEvents       func() int64
+	httpClient          *http.Client
+	calendarFetcher     *calendar.Fetcher
+	calendarEvents      storage.CalendarEventRepo
+	calendarDefaultMins int
 }
 
 // SetCalendarSupport wires the calendar fetcher used for URL
-// validation on entry and the event-state repo used by the "Remove
-// calendar" UX. Both are optional; a nil fetcher disables the URL
-// validation handshake (the URL still saves) and a nil event repo
-// turns "Remove" into a no-op against the events collection.
-func (h *Handler) SetCalendarSupport(fetcher *calendar.Fetcher, events storage.CalendarEventRepo) {
+// validation on entry, the event-state repo used by the "Remove
+// calendar" UX, and the env-supplied default reminder minutes used by
+// the UI when the user hasn't set a custom value. A defaultMins <=0
+// falls back to storage.DefaultCalendarReminderMinutes so UI never
+// shows "0 minutes".
+func (h *Handler) SetCalendarSupport(fetcher *calendar.Fetcher, events storage.CalendarEventRepo, defaultMins int) {
 	h.calendarFetcher = fetcher
 	h.calendarEvents = events
+	if defaultMins <= 0 {
+		defaultMins = storage.DefaultCalendarReminderMinutes
+	}
+	h.calendarDefaultMins = defaultMins
 }
 
 // SetWebhookStats wires the webhook registration repo and an accessor for
