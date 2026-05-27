@@ -26,6 +26,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
@@ -220,6 +221,39 @@ func main() {
 	log.Info().Msg("telegram-svc stopped")
 }
 
+// telegramMaxMessageChars is Telegram's hard limit on message text,
+// counted in UTF-16 code units. Messages over it are rejected with
+// "Bad Request: message is too long", so the producer-side text builders
+// (issue change-detection, scheduled reports, calendar) can silently lose
+// a notification. capForTelegram is the single chokepoint that prevents
+// that: telegram-svc is the only Telegram sender, so capping here covers
+// every notification type.
+const telegramMaxMessageChars = 4096
+
+// capForTelegram truncates text to Telegram's length limit. Truncation can
+// split a Markdown entity, which would itself trigger a "can't parse
+// entities" rejection, so a truncated message is sent as plain text
+// (parseMode cleared) — losing markup on an over-long message is
+// preferable to dropping it. Returns the (possibly truncated) text and the
+// parse mode to use.
+func capForTelegram(text, parseMode, reason string, log zerolog.Logger) (string, string) {
+	units := utf16.Encode([]rune(text))
+	if len(units) <= telegramMaxMessageChars {
+		return text, parseMode
+	}
+	const ellipsis = "…"
+	cut := telegramMaxMessageChars - len(utf16.Encode([]rune(ellipsis)))
+	// Don't cut in the middle of a surrogate pair (e.g. an emoji).
+	if cut > 0 && units[cut-1] >= 0xD800 && units[cut-1] <= 0xDBFF {
+		cut--
+	}
+	log.Warn().
+		Int("orig_units", len(units)).
+		Str("reason", reason).
+		Msg("telegram-svc: message exceeded Telegram length limit; truncated and sent as plain text")
+	return string(utf16.Decode(units[:cut])) + ellipsis, ""
+}
+
 func runConsumer(ctx context.Context, sub *nats.Subscription, tgAPI *tgbotapi.BotAPI, pub eventsv1.Publisher, log zerolog.Logger) {
 	for {
 		if ctx.Err() != nil {
@@ -282,9 +316,10 @@ func handleMessage(ctx context.Context, msg *nats.Msg, tgAPI *tgbotapi.BotAPI, p
 		return
 	}
 
-	tg := tgbotapi.NewMessage(req.ChatID, req.Text)
-	if req.ParseMode != "" {
-		tg.ParseMode = req.ParseMode
+	text, parseMode := capForTelegram(req.Text, req.ParseMode, req.Reason, log)
+	tg := tgbotapi.NewMessage(req.ChatID, text)
+	if parseMode != "" {
+		tg.ParseMode = parseMode
 	}
 	tg.DisableWebPagePreview = req.DisableWebPagePreview
 
