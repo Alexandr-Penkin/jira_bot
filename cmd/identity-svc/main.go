@@ -38,7 +38,6 @@ import (
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
-	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/telemetry"
@@ -107,28 +106,23 @@ func main() {
 
 	userRepo := storage.NewUserRepo(mongo.Database(), enc)
 
-	// Event publisher is optional for identity-svc itself — the monolith
-	// publishes UserAuthenticated — but TokensRefreshed should be
-	// emitted from whichever process actually refreshes. Enable it by
-	// default when NATS is configured.
-	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
-	var natsPub *natsx.JetStreamPublisher
-	if cfg.EnableEventPublish {
-		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
-		if err != nil {
-			log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
-			return
-		}
-		if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
-			log.Error().Err(err).Msg("failed to ensure JetStream streams")
-			_ = jsPub.Close()
-			return
-		}
-		eventPub = jsPub
-		natsPub = jsPub
-		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
-		defer func() { _ = jsPub.Close() }()
+	// identity-svc is the sole token-refresh owner, so TokensRefreshed is
+	// emitted from here. The event bus is mandatory; a NATS connection
+	// failure is fatal.
+	jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
+	if err != nil {
+		log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
+		return
 	}
+	if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
+		log.Error().Err(err).Msg("failed to ensure JetStream streams")
+		_ = jsPub.Close()
+		return
+	}
+	defer func() { _ = jsPub.Close() }()
+	log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
+	eventPub := jsPub
+	natsPub := jsPub
 	userRepo.SetEventPublisher(eventPub)
 
 	httpClient, err := proxy.NewHTTPClient(cfg.ProxyURL, 30*time.Second)

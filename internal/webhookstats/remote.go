@@ -1,8 +1,8 @@
 // Package webhookstats provides a small HTTP client for the webhook-svc
-// /internal/stats endpoint. Used by admin-stats handlers in cmd/bot and
-// cmd/telegram-svc when the monolith no longer embeds the webhook server
-// (EMBED_WEBHOOK_SERVER=false) — the in-process Handler counter is zero
-// in that mode, so admin stats must reach across to the standalone svc.
+// /internal/stats endpoint. Used by the admin-stats handler in
+// cmd/telegram-svc: webhook-svc owns ingress, so the running
+// events_received counter lives there and must be fetched across the
+// network for the bot's /admin and /diagnose views.
 package webhookstats
 
 import (

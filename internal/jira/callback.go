@@ -3,11 +3,11 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -26,35 +26,202 @@ const pendingSiteMaxAge = 10 * time.Minute
 // PendingSiteSelection holds OAuth tokens and available Jira sites while
 // the user picks which site to connect to.
 type PendingSiteSelection struct {
-	TokenResponse *TokenResponse
-	Resources     []AccessibleResource
-	CreatedAt     time.Time
+	TokenResponse *TokenResponse       `json:"token_response"`
+	Resources     []AccessibleResource `json:"resources"`
+	CreatedAt     time.Time            `json:"created_at"`
 }
 
+// PendingSiteStore persists at most one pending multi-site selection per
+// Telegram user. It deals in opaque JSON payloads so the storage layer
+// stays free of any jira type dependency. The OAuth callback (cmd/bot)
+// writes; the Telegram site-selection button handler (telegram-svc)
+// reads — hence a shared Mongo-backed store rather than process memory.
+type PendingSiteStore interface {
+	Save(ctx context.Context, telegramUserID int64, payload string, createdAt time.Time) error
+	Consume(ctx context.Context, telegramUserID int64) (payload string, createdAt time.Time, err error)
+}
+
+// SiteConnector owns the post-OAuth account-linking logic shared between
+// the HTTP callback (single-site finalize + multi-site staging) and the
+// Telegram site-selection button (consume + finalize). Both hosts
+// construct one against the same Mongo pending store so multi-site
+// selection works regardless of which process serves which step.
+type SiteConnector struct {
+	oauth      *OAuthClient
+	userRepo   *storage.UserRepo
+	subRepo    *storage.SubscriptionRepo
+	webhookMgr *WebhookManager
+	pending    PendingSiteStore
+	tgAPI      *tgbotapi.BotAPI
+	pub        eventsv1.Publisher
+	log        zerolog.Logger
+}
+
+func NewSiteConnector(
+	oauth *OAuthClient,
+	userRepo *storage.UserRepo,
+	subRepo *storage.SubscriptionRepo,
+	webhookMgr *WebhookManager,
+	pending PendingSiteStore,
+	tgAPI *tgbotapi.BotAPI,
+	log zerolog.Logger,
+) *SiteConnector {
+	return &SiteConnector{
+		oauth:      oauth,
+		userRepo:   userRepo,
+		subRepo:    subRepo,
+		webhookMgr: webhookMgr,
+		pending:    pending,
+		tgAPI:      tgAPI,
+		pub:        eventsv1.NoopPublisher{},
+		log:        log,
+	}
+}
+
+// SetEventPublisher installs a domain event publisher. Finalize emits
+// UserAuthenticated alongside the Upsert.
+func (sc *SiteConnector) SetEventPublisher(p eventsv1.Publisher) {
+	if p == nil {
+		sc.pub = eventsv1.NoopPublisher{}
+		return
+	}
+	sc.pub = p
+}
+
+// UserLang resolves the user's preferred language for OAuth-flow messages,
+// falling back to the default when the user is unknown.
+func (sc *SiteConnector) UserLang(ctx context.Context, telegramUserID int64) locale.Lang {
+	user, err := sc.userRepo.GetByTelegramID(ctx, telegramUserID)
+	if err != nil || user == nil {
+		return locale.Default
+	}
+	return locale.FromString(user.Language)
+}
+
+// StorePending stages a multi-site selection for the user. The payload
+// (which carries the freshly-issued tokens) is encrypted at rest by the
+// store implementation.
+func (sc *SiteConnector) StorePending(ctx context.Context, telegramUserID int64, token *TokenResponse, resources []AccessibleResource) error {
+	now := time.Now()
+	payload, err := json.Marshal(PendingSiteSelection{
+		TokenResponse: token,
+		Resources:     resources,
+		CreatedAt:     now,
+	})
+	if err != nil {
+		return err
+	}
+	return sc.pending.Save(ctx, telegramUserID, string(payload), now)
+}
+
+// ConsumePending retrieves and removes a pending selection. Returns
+// (nil, nil) when none exists or it has expired, so the caller can show a
+// "selection expired" message; a non-nil error signals a real failure.
+func (sc *SiteConnector) ConsumePending(ctx context.Context, telegramUserID int64) (*PendingSiteSelection, error) {
+	payload, createdAt, err := sc.pending.Consume(ctx, telegramUserID)
+	if errors.Is(err, storage.ErrOAuthPendingNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if time.Since(createdAt) > pendingSiteMaxAge {
+		return nil, nil
+	}
+	var pending PendingSiteSelection
+	if err := json.Unmarshal([]byte(payload), &pending); err != nil {
+		return nil, err
+	}
+	pending.CreatedAt = createdAt
+	return &pending, nil
+}
+
+// Finalize persists the selected Jira site for the user, (re)registers
+// webhooks for existing subscriptions, publishes UserAuthenticated, and
+// sends a Telegram confirmation.
+func (sc *SiteConnector) Finalize(ctx context.Context, telegramUserID int64, tokenResp *TokenResponse, resource AccessibleResource) error {
+	accountID := ""
+	displayName := ""
+	if myself, myselfErr := fetchMyself(ctx, resource.ID, tokenResp.AccessToken); myselfErr == nil {
+		accountID = myself.AccountID
+		displayName = myself.DisplayName
+	} else {
+		sc.log.Warn().Err(myselfErr).Msg("failed to fetch Jira account ID during OAuth")
+	}
+
+	user := &storage.User{
+		TelegramUserID:  telegramUserID,
+		JiraCloudID:     resource.ID,
+		JiraAccountID:   accountID,
+		JiraDisplayName: displayName,
+		JiraSiteURL:     resource.URL,
+		AccessToken:     tokenResp.AccessToken,
+		RefreshToken:    tokenResp.RefreshToken,
+		TokenExpiresAt:  sc.oauth.TokenExpiresAt(tokenResp.ExpiresIn),
+		GrantedScopes:   tokenResp.Scope,
+	}
+
+	if err := sc.userRepo.Upsert(ctx, user); err != nil {
+		return err
+	}
+
+	sc.log.Info().
+		Int64("telegram_user_id", telegramUserID).
+		Str("jira_site", resource.Name).
+		Msg("user connected to Jira")
+
+	if pubErr := sc.pub.Publish(ctx, eventsv1.UserAuthenticated{
+		TelegramID:      telegramUserID,
+		JiraAccountID:   accountID,
+		CloudID:         resource.ID,
+		SiteURL:         resource.URL,
+		AuthenticatedAt: time.Now().Unix(),
+	}, ""); pubErr != nil {
+		sc.log.Warn().Err(pubErr).Int64("telegram_user_id", telegramUserID).Msg("publish user_authenticated failed")
+	}
+
+	// Re-fetch the persisted user so the webhook manager gets a copy
+	// with decrypted tokens (Upsert leaves the input struct's tokens
+	// untouched but requires the repo's decrypt path).
+	if sc.subRepo != nil && sc.webhookMgr != nil {
+		if subs, subErr := sc.subRepo.GetActiveByUser(ctx, telegramUserID); subErr == nil && len(subs) > 0 {
+			sc.webhookMgr.RegisterForExistingSubscriptions(ctx, telegramUserID, subs)
+		} else if subErr != nil {
+			sc.log.Warn().Err(subErr).Int64("user_id", telegramUserID).Msg("failed to read subscriptions for webhook registration")
+		}
+	}
+
+	if sc.tgAPI != nil {
+		lang := sc.UserLang(ctx, telegramUserID)
+		msg := tgbotapi.NewMessage(telegramUserID, locale.T(lang, "connect.success", format.EscapeMarkdown(resource.Name)))
+		msg.ParseMode = tgbotapi.ModeMarkdown
+		if _, err := sc.tgAPI.Send(msg); err != nil {
+			sc.log.Error().Err(err).Msg("failed to send connect confirmation")
+		}
+	}
+
+	return nil
+}
+
+// CallbackServer serves the OAuth 2.0 redirect endpoint plus the static
+// web pages. Account-linking logic lives in SiteConnector so the Telegram
+// site-selection button (hosted in a different process) can finalize a
+// connection started here.
 type CallbackServer struct {
-	oauth        *OAuthClient
-	userRepo     *storage.UserRepo
-	subRepo      *storage.SubscriptionRepo
-	webhookMgr   *WebhookManager
-	tgAPI        *tgbotapi.BotAPI
-	log          zerolog.Logger
-	server       *http.Server
-	mux          *http.ServeMux
-	pendingMu    sync.Mutex
-	pendingSites map[int64]*PendingSiteSelection // keyed by TelegramUserID
-	pub          eventsv1.Publisher
+	oauth     *OAuthClient
+	connector *SiteConnector
+	tgAPI     *tgbotapi.BotAPI
+	log       zerolog.Logger
+	server    *http.Server
+	mux       *http.ServeMux
 }
 
-func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, userRepo *storage.UserRepo, subRepo *storage.SubscriptionRepo, webhookMgr *WebhookManager, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *CallbackServer {
+func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, connector *SiteConnector, tgAPI *tgbotapi.BotAPI, log zerolog.Logger) *CallbackServer {
 	cs := &CallbackServer{
-		oauth:        oauth,
-		userRepo:     userRepo,
-		subRepo:      subRepo,
-		webhookMgr:   webhookMgr,
-		tgAPI:        tgAPI,
-		log:          log,
-		pendingSites: make(map[int64]*PendingSiteSelection),
-		pub:          eventsv1.NoopPublisher{},
+		oauth:     oauth,
+		connector: connector,
+		tgAPI:     tgAPI,
+		log:       log,
 	}
 
 	callbackRL := middleware.NewRateLimiter(10, 20, time.Minute, ctx)
@@ -72,24 +239,12 @@ func NewCallbackServer(ctx context.Context, addr string, oauth *OAuthClient, use
 		IdleTimeout:       60 * time.Second,
 	}
 
-	go cs.cleanupPendingSites(ctx)
-
 	return cs
 }
 
 // Handle registers an additional handler on the callback server's mux.
 func (cs *CallbackServer) Handle(pattern string, handler http.Handler) {
 	cs.mux.Handle(pattern, handler)
-}
-
-// SetEventPublisher installs a domain event publisher. Phase 0 of the DDD
-// split emits UserAuthenticated alongside the existing Upsert.
-func (cs *CallbackServer) SetEventPublisher(p eventsv1.Publisher) {
-	if p == nil {
-		cs.pub = eventsv1.NoopPublisher{}
-		return
-	}
-	cs.pub = p
 }
 
 // HandleFunc registers a function as a handler on the callback server's mux.
@@ -161,8 +316,12 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 	}
 
 	if len(resources) > 1 {
-		cs.storePendingSite(telegramUserID, tokenResp, resources)
-		lang := cs.getUserLang(ctx, telegramUserID)
+		if err := cs.connector.StorePending(ctx, telegramUserID, tokenResp, resources); err != nil {
+			cs.log.Error().Err(err).Msg("failed to stage pending site selection")
+			http.Error(w, "failed to save authorization", http.StatusInternalServerError)
+			return
+		}
+		lang := cs.connector.UserLang(ctx, telegramUserID)
 
 		rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(resources))
 		for i, res := range resources {
@@ -187,7 +346,7 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 	}
 
 	resource := resources[0]
-	if err = cs.finalizeSiteConnection(ctx, telegramUserID, tokenResp, resource); err != nil {
+	if err = cs.connector.Finalize(ctx, telegramUserID, tokenResp, resource); err != nil {
 		cs.log.Error().Err(err).Msg("failed to finalize connection")
 		http.Error(w, "failed to save authorization", http.StatusInternalServerError)
 		return
@@ -200,127 +359,6 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 func (cs *CallbackServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprint(w, "ok")
-}
-
-func (cs *CallbackServer) getUserLang(ctx context.Context, telegramUserID int64) locale.Lang {
-	user, err := cs.userRepo.GetByTelegramID(ctx, telegramUserID)
-	if err != nil || user == nil {
-		return locale.Default
-	}
-	return locale.FromString(user.Language)
-}
-
-func (cs *CallbackServer) cleanupPendingSites(ctx context.Context) {
-	ticker := time.NewTicker(pendingSiteMaxAge)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			cs.pendingMu.Lock()
-			for id, p := range cs.pendingSites {
-				if time.Since(p.CreatedAt) > pendingSiteMaxAge {
-					delete(cs.pendingSites, id)
-				}
-			}
-			cs.pendingMu.Unlock()
-		}
-	}
-}
-
-func (cs *CallbackServer) storePendingSite(telegramUserID int64, token *TokenResponse, resources []AccessibleResource) {
-	cs.pendingMu.Lock()
-	defer cs.pendingMu.Unlock()
-	cs.pendingSites[telegramUserID] = &PendingSiteSelection{
-		TokenResponse: token,
-		Resources:     resources,
-		CreatedAt:     time.Now(),
-	}
-}
-
-// ConsumePendingSite retrieves and removes a pending site selection for the
-// given user. Returns nil if no pending selection exists or if it has expired.
-func (cs *CallbackServer) ConsumePendingSite(telegramUserID int64) *PendingSiteSelection {
-	cs.pendingMu.Lock()
-	defer cs.pendingMu.Unlock()
-	pending, ok := cs.pendingSites[telegramUserID]
-	if !ok {
-		return nil
-	}
-	delete(cs.pendingSites, telegramUserID)
-	if time.Since(pending.CreatedAt) > pendingSiteMaxAge {
-		return nil
-	}
-	return pending
-}
-
-// FinalizeSiteConnection saves the selected Jira site for the user and sends
-// a confirmation message in Telegram.
-func (cs *CallbackServer) FinalizeSiteConnection(ctx context.Context, telegramUserID int64, tokenResp *TokenResponse, resource AccessibleResource) error {
-	return cs.finalizeSiteConnection(ctx, telegramUserID, tokenResp, resource)
-}
-
-func (cs *CallbackServer) finalizeSiteConnection(ctx context.Context, telegramUserID int64, tokenResp *TokenResponse, resource AccessibleResource) error {
-	accountID := ""
-	displayName := ""
-	if myself, myselfErr := fetchMyself(ctx, resource.ID, tokenResp.AccessToken); myselfErr == nil {
-		accountID = myself.AccountID
-		displayName = myself.DisplayName
-	} else {
-		cs.log.Warn().Err(myselfErr).Msg("failed to fetch Jira account ID during OAuth")
-	}
-
-	user := &storage.User{
-		TelegramUserID:  telegramUserID,
-		JiraCloudID:     resource.ID,
-		JiraAccountID:   accountID,
-		JiraDisplayName: displayName,
-		JiraSiteURL:     resource.URL,
-		AccessToken:     tokenResp.AccessToken,
-		RefreshToken:    tokenResp.RefreshToken,
-		TokenExpiresAt:  cs.oauth.TokenExpiresAt(tokenResp.ExpiresIn),
-		GrantedScopes:   tokenResp.Scope,
-	}
-
-	if err := cs.userRepo.Upsert(ctx, user); err != nil {
-		return err
-	}
-
-	cs.log.Info().
-		Int64("telegram_user_id", telegramUserID).
-		Str("jira_site", resource.Name).
-		Msg("user connected to Jira")
-
-	if pubErr := cs.pub.Publish(ctx, eventsv1.UserAuthenticated{
-		TelegramID:      telegramUserID,
-		JiraAccountID:   accountID,
-		CloudID:         resource.ID,
-		SiteURL:         resource.URL,
-		AuthenticatedAt: time.Now().Unix(),
-	}, ""); pubErr != nil {
-		cs.log.Warn().Err(pubErr).Int64("telegram_user_id", telegramUserID).Msg("publish user_authenticated failed")
-	}
-
-	// Re-fetch the persisted user so the webhook manager gets a copy
-	// with decrypted tokens (Upsert leaves the input struct's tokens
-	// untouched but requires the repo's decrypt path).
-	if cs.subRepo != nil && cs.webhookMgr != nil {
-		if subs, subErr := cs.subRepo.GetActiveByUser(ctx, telegramUserID); subErr == nil && len(subs) > 0 {
-			cs.webhookMgr.RegisterForExistingSubscriptions(ctx, telegramUserID, subs)
-		} else if subErr != nil {
-			cs.log.Warn().Err(subErr).Int64("user_id", telegramUserID).Msg("failed to read subscriptions for webhook registration")
-		}
-	}
-
-	lang := cs.getUserLang(ctx, telegramUserID)
-	msg := tgbotapi.NewMessage(telegramUserID, locale.T(lang, "connect.success", format.EscapeMarkdown(resource.Name)))
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	if _, err := cs.tgAPI.Send(msg); err != nil {
-		cs.log.Error().Err(err).Msg("failed to send connect confirmation")
-	}
-
-	return nil
 }
 
 // fetchMyself calls the Jira /myself endpoint to get the current user's account ID.

@@ -34,8 +34,8 @@ type Event interface {
 }
 
 // Publisher abstracts event emission so producer packages do not depend
-// on a specific broker client. Implementations live in pkg/natsx (real)
-// and are replaced by no-ops when ENABLE_EVENT_PUBLISH=false.
+// on a specific broker client. The real implementation lives in
+// pkg/natsx; NoopPublisher is used as a pre-wiring default and in tests.
 type Publisher interface {
 	Publish(ctx context.Context, event Event, traceID string) error
 	Close() error

@@ -1,5 +1,6 @@
 .env
 /bot
+/webhook-svc
 *.exe
 *.exe~
 *.dll

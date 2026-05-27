@@ -1,4 +1,10 @@
+# Full SleepJiraBot microservice fleet. Every service starts by default —
+# there is no monolith mode. Mongo lives on the external apenkinpro_internal
+# network; NATS + Redis are defined here. Inter-service URLs resolve to the
+# compose service names.
 services:
+  # Auth + web + calendar service: OAuth /callback, landing/privacy/logo,
+  # and the calendar feed poller (reminders fan out as events).
   bot:
     build: .
     restart: unless-stopped
@@ -6,11 +12,15 @@ services:
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
+      DEDUP_REDIS_URL: redis://redis:6379/0
     ports:
       - "8080:8080"
     depends_on:
       nats:
         condition: service_healthy
+      identity-svc:
+        condition: service_started
     networks:
       - default
       - mongo_net
@@ -21,57 +31,19 @@ services:
       retries: 3
       start_period: 10s
 
-  # Phase 1: standalone Jira webhook ingress. Enable with
-  # `docker compose --profile webhook-svc up`. When this service is used,
-  # set EMBED_WEBHOOK_SERVER=false in the bot's env and point Jira's
-  # webhook URLs at the webhook-svc address (or host:8081).
-  webhook-svc:
-    build:
-      context: .
-      args:
-        CMD_PATH: ./cmd/webhook-svc
-    profiles: ["webhook-svc"]
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      MONGO_URI: mongodb://mongo:27017
-      NATS_URL: nats://nats:4222
-      WEBHOOK_SVC_ADDR: ":8081"
-      ENABLE_EVENT_PUBLISH: "true"
-    ports:
-      - "8081:8081"
-    depends_on:
-      nats:
-        condition: service_healthy
-    networks:
-      - default
-      - mongo_net
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Phase 2 (infrastructure slice): standalone Jira token custody.
-  # Enable with `docker compose --profile identity-svc up`. Exposes
-  # POST /internal/lease on :9080 for sibling services. The monolith
-  # keeps its own embedded lease listener on :9080 too — when running
-  # identity-svc co-resident, remap the monolith's INTERNAL_ADDR (e.g.
-  # to :9079) or disable the bot's internal listener.
+  # Jira token custody: the single refresh owner. Exposes POST
+  # /internal/lease on :9080 for every token consumer in the fleet.
   identity-svc:
     build:
       context: .
       args:
         CMD_PATH: ./cmd/identity-svc
-    profiles: ["identity-svc"]
     restart: unless-stopped
     env_file: .env
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
       INTERNAL_ADDR: ":9080"
-      ENABLE_EVENT_PUBLISH: "true"
     ports:
       - "9080:9080"
     depends_on:
@@ -87,89 +59,18 @@ services:
       retries: 3
       start_period: 10s
 
-  # Phase 3: standalone Jira polling. Enable with
-  # `docker compose --profile subscription-svc up`. Set
-  # EMBED_POLLER=false on the bot to avoid double-polling. Uses
-  # IDENTITY_SVC_URL (if set) to lease tokens remotely; otherwise
-  # resolves tokens in-process against shared Mongo.
-  subscription-svc:
-    build:
-      context: .
-      args:
-        CMD_PATH: ./cmd/subscription-svc
-    profiles: ["subscription-svc"]
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      MONGO_URI: mongodb://mongo:27017
-      NATS_URL: nats://nats:4222
-      SUBSCRIPTION_SVC_ADDR: ":8082"
-      ENABLE_EVENT_PUBLISH: "true"
-    ports:
-      - "8082:8082"
-    depends_on:
-      nats:
-        condition: service_healthy
-    networks:
-      - default
-      - mongo_net
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Phase 4: standalone cron-triggered reports. Enable with
-  # `docker compose --profile scheduler-svc up`. Set
-  # EMBED_SCHEDULER=false on the bot to avoid double-firing.
-  scheduler-svc:
-    build:
-      context: .
-      args:
-        CMD_PATH: ./cmd/scheduler-svc
-    profiles: ["scheduler-svc"]
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      MONGO_URI: mongodb://mongo:27017
-      NATS_URL: nats://nats:4222
-      SCHEDULER_SVC_ADDR: ":8083"
-      ENABLE_EVENT_PUBLISH: "true"
-    ports:
-      - "8083:8083"
-    depends_on:
-      nats:
-        condition: service_healthy
-    networks:
-      - default
-      - mongo_net
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Phase 5: standalone user-preferences storage. Enable with
-  # `docker compose --profile preferences-svc up`. Set
-  # EMBED_PREFERENCES=false and PREFERENCES_SVC_URL=http://preferences-svc:9082
-  # on the bot to offload preferences resolution. Event emission lives
-  # in UserRepo, so whichever process writes fires the event — running
-  # both co-resident does not double-publish.
+  # User preferences (language, defaults, JQL filters, field mappings).
   preferences-svc:
     build:
       context: .
       args:
         CMD_PATH: ./cmd/preferences-svc
-    profiles: ["preferences-svc"]
     restart: unless-stopped
     env_file: .env
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
       PREFERENCES_SVC_ADDR: ":9082"
-      ENABLE_EVENT_PUBLISH: "true"
     ports:
       - "9082:9082"
     depends_on:
@@ -185,29 +86,126 @@ services:
       retries: 3
       start_period: 10s
 
-  # Phase 6a: standalone Telegram delivery. Enable with
-  # `docker compose --profile telegram-svc up`. Set
-  # NOTIFY_VIA_EVENTS=true on the bot/poller/scheduler/webhook to route
-  # Send calls through NATS; telegram-svc is the single subscriber of
-  # sjb.notify.requested.v1 and owns the tgbotapi Send path.
-  telegram-svc:
+  # Jira webhook ingress + 24h registration refresher. Sole owner of
+  # /webhook; Jira's webhook URLs must point here.
+  webhook-svc:
     build:
       context: .
       args:
-        CMD_PATH: ./cmd/telegram-svc
-    profiles: ["telegram-svc"]
+        CMD_PATH: ./cmd/webhook-svc
     restart: unless-stopped
     env_file: .env
     environment:
       MONGO_URI: mongodb://mongo:27017
       NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
+      DEDUP_REDIS_URL: redis://redis:6379/0
+      WEBHOOK_SVC_ADDR: ":8081"
+    ports:
+      - "8081:8081"
+    depends_on:
+      nats:
+        condition: service_healthy
+      identity-svc:
+        condition: service_started
+    networks:
+      - default
+      - mongo_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Jira polling for every stored subscription.
+  subscription-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/subscription-svc
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
+      DEDUP_REDIS_URL: redis://redis:6379/0
+      SUBSCRIPTION_SVC_ADDR: ":8082"
+    ports:
+      - "8082:8082"
+    depends_on:
+      nats:
+        condition: service_healthy
+      identity-svc:
+        condition: service_started
+    networks:
+      - default
+      - mongo_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Cron-triggered reports.
+  scheduler-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/scheduler-svc
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
+      SCHEDULER_SVC_ADDR: ":8083"
+    ports:
+      - "8083:8083"
+    depends_on:
+      nats:
+        condition: service_healthy
+      identity-svc:
+        condition: service_started
+    networks:
+      - default
+      - mongo_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Telegram update-handling (commands, wizards, callbacks) + the sole
+  # NotifyRequested consumer that delivers messages to Telegram.
+  telegram-svc:
+    build:
+      context: .
+      args:
+        CMD_PATH: ./cmd/telegram-svc
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      NATS_URL: nats://nats:4222
+      IDENTITY_SVC_URL: http://identity-svc:9080
+      PREFERENCES_SVC_URL: http://preferences-svc:9082
+      WEBHOOK_SVC_URL: http://webhook-svc:8081
       TELEGRAM_SVC_ADDR: ":8084"
-      ENABLE_EVENT_PUBLISH: "true"
     ports:
       - "8084:8084"
     depends_on:
       nats:
         condition: service_healthy
+      identity-svc:
+        condition: service_started
+      preferences-svc:
+        condition: service_started
+      webhook-svc:
+        condition: service_started
     networks:
       - default
       - mongo_net
@@ -218,13 +216,10 @@ services:
       retries: 3
       start_period: 10s
 
-  # Shared Redis for distributed notifydedup. Enable with
-  # `docker compose --profile redis up`. When DEDUP_REDIS_URL is set,
-  # subscription-svc / webhook-svc / bot all SETNX-coordinate through
-  # it and multi-replica deploys stop double-notifying.
+  # Shared Redis for distributed notifydedup across notifying services
+  # (bot calendar poller, subscription-svc, webhook-svc).
   redis:
     image: redis:7-alpine
-    profiles: ["redis"]
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:

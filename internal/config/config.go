@@ -42,126 +42,68 @@ type Config struct {
 	AdminTelegramID       int64
 	ProxyURL              string
 
-	// Phase 0 of DDD microservices split: event bus alongside the monolith.
-	// NatsURL is consulted only when EnableEventPublish is true.
-	NatsURL            string
-	EnableEventPublish bool
+	// NatsURL is the JetStream cluster every service connects to. The
+	// event bus is mandatory in the microservice topology — there is no
+	// in-process fallback — so a connection failure is fatal at startup.
+	NatsURL string
 
-	// Phase 1: when EmbedWebhookServer is false, the monolith no longer
-	// registers /webhook on its callback server, does not start the
-	// webhook event queue, and skips the daily refresher goroutine. The
-	// expectation is that a standalone webhook-svc owns webhook ingress
-	// in that configuration. Default true preserves current behaviour.
-	EmbedWebhookServer bool
-
-	// WebhookSvcAddr is consulted only by cmd/webhook-svc.
+	// WebhookSvcAddr is the HTTP listen address for cmd/webhook-svc.
 	WebhookSvcAddr string
 
-	// WebhookSvcURL, when set on the monolith, points admin stats at the
-	// standalone webhook-svc /internal/stats endpoint so the in-process
-	// counter (which stays zero when EmbedWebhookServer is false) is
-	// replaced with the real value. Authenticated with InternalAuthToken.
+	// WebhookSvcURL points admin-stats consumers (telegram-svc) at the
+	// webhook-svc /internal/stats endpoint so the events_received counter
+	// reflects the process that actually owns webhook ingress.
+	// Authenticated with InternalAuthToken.
 	WebhookSvcURL string
 
-	// Phase 2: identity-svc TokenLease protocol. InternalAddr is the
-	// listener for /internal/lease (kept separate from the public
-	// callback server so the lease endpoint is not exposed to Jira
-	// callbacks / the world). InternalAuthToken is the shared secret
-	// checked as a bearer token; empty disables auth and the listener
-	// must be protected at the network layer.
+	// InternalAddr is the listener cmd/identity-svc exposes /internal/lease
+	// on (kept off the public callback server). InternalAuthToken is the
+	// shared bearer secret checked by identity-svc / preferences-svc /
+	// webhook-svc internal endpoints; empty disables auth and the
+	// listeners must be protected at the network layer.
 	InternalAddr      string
 	InternalAuthToken string
 
-	// IdentitySvcURL, when set, directs monolith consumers to call an
-	// external identity-svc over HTTP instead of resolving tokens in
-	// process. Empty keeps the embedded LocalProvider path.
+	// IdentitySvcURL is the base URL of cmd/identity-svc. Every Jira-token
+	// consumer (bot, subscription-svc, scheduler-svc, webhook-svc,
+	// telegram-svc) leases tokens through it so identity-svc is the single
+	// refresh owner. Required for those services.
 	IdentitySvcURL string
 
-	// Phase 3: EmbedPoller controls whether the monolith runs its own
-	// Jira polling loop. Set false when subscription-svc takes over
-	// polling. Default true preserves current behaviour.
-	EmbedPoller bool
-
-	// Phase 4: EmbedScheduler controls whether the monolith runs its
-	// cron scheduler. Set false when scheduler-svc takes over.
-	EmbedScheduler bool
-
-	// Phase 5: EmbedPreferences controls whether the monolith resolves
-	// user preferences in process (embedded LocalProvider over UserRepo)
-	// or offloads to a standalone preferences-svc over HTTP. Default
-	// true preserves current behaviour.
-	EmbedPreferences bool
-
-	// PreferencesSvcURL, when set, directs monolith consumers to call an
-	// external preferences-svc over HTTP instead of resolving preferences
-	// in process. Empty keeps the embedded path.
+	// PreferencesSvcURL is the base URL of cmd/preferences-svc. telegram-svc
+	// resolves user preferences through it. Required for telegram-svc.
 	PreferencesSvcURL string
 
-	// PreferencesSvcAddr is consulted only by cmd/preferences-svc.
+	// PreferencesSvcAddr is the HTTP listen address for cmd/preferences-svc.
 	PreferencesSvcAddr string
 
 	// DedupRedisURL, when set, points notifydedup at a Redis instance
-	// instead of the in-process Guard. Use when running subscription-svc
-	// or webhook-svc with more than one replica — in-memory dedup is
-	// per-process and will allow a duplicate storm. Format:
-	// redis://user:pass@host:port/db.
+	// instead of the in-process Guard. Use when running a notifying
+	// service (subscription-svc / webhook-svc / bot calendar poller) with
+	// more than one replica — in-memory dedup is per-process and will
+	// allow a duplicate storm. Format: redis://user:pass@host:port/db.
 	DedupRedisURL string
 
-	// Phase 6a: NotifyViaEvents flips the producer-side notifier from
-	// direct Telegram API calls to NATS event publishing. When true AND
-	// EnableEventPublish is true, poller/scheduler/webhook publish
-	// NotifyRequested events; a separate telegram-svc is expected to
-	// consume and deliver. Default false preserves direct-send behaviour
-	// — flipping to true without a running telegram-svc will silently
-	// queue messages in JetStream.
-	NotifyViaEvents bool
-
-	// Phase 6 prep: PersistConversationStates swaps the Telegram FSM's
-	// default in-memory store for a Mongo-backed one (collection
-	// conversation_states, TTL-expired). Opt-in for two reasons — Mongo
-	// round-trips per update add ~1ms, and the in-memory path is still
-	// fine for a single replica. Default false preserves current
-	// behaviour.
+	// PersistConversationStates swaps the Telegram FSM's default in-memory
+	// store for a Mongo-backed one (collection conversation_states,
+	// TTL-expired). Opt-in: Mongo round-trips per update add ~1ms, and the
+	// in-memory path is fine for a single telegram-svc replica.
 	PersistConversationStates bool
 
-	// Phase 6b: EmbedTelegramUpdates controls whether the monolith runs
-	// the Telegram long-polling receive loop (`bot.Start`). Default true
-	// preserves current behaviour. When false, the monolith still
-	// constructs a `*telegram.Bot` so `bot.API()` stays available for the
-	// OAuth callback-server's "you connected" messages and for the
-	// DirectNotifier fallback, but no updates are consumed — a
-	// telegram-svc running with TELEGRAM_SVC_UPDATES=true is expected to
-	// own update handling. Only one process may call getUpdates at a time;
-	// running both leads to interleaved updates and FSM corruption.
-	EmbedTelegramUpdates bool
-
-	// Phase 6b: TelegramSvcUpdates flips cmd/telegram-svc from a
-	// notify-consumer-only role into a full update handler. Default
-	// false. When true, telegram-svc constructs Mongo, Jira, preferences,
-	// webhook, and OAuth dependencies and starts its own Telegram
-	// long-polling loop using the shared `internal/telegram` code. Pair
-	// with EMBED_TELEGRAM_UPDATES=false on the monolith.
-	TelegramSvcUpdates bool
-
-	// Phase 7a: OpenTelemetry bootstrap. When OtelExporterEndpoint is
-	// non-empty, services install an OTLP/gRPC tracer provider with the
-	// given endpoint (e.g. "otel-collector:4317"). Empty disables the
-	// SDK entirely — a no-op TracerProvider is installed so
-	// `otel.Tracer(...)` calls are safe and allocation-free. OtelServiceName
-	// overrides the default service.name resource attribute (each cmd
-	// supplies its own default).
+	// OpenTelemetry bootstrap. When OtelExporterEndpoint is non-empty,
+	// services install an OTLP/gRPC tracer + meter provider with the given
+	// endpoint (e.g. "otel-collector:4317"). Empty disables the SDK
+	// entirely — no-op providers are installed so instrumentation calls
+	// stay safe and allocation-free. OtelServiceName overrides the default
+	// service.name resource attribute (each cmd supplies its own default).
 	OtelExporterEndpoint string
 	OtelServiceName      string
 	OtelExporterInsecure bool
 
-	// Calendar feed knobs. EmbedCalendarPoller mirrors EmbedPoller —
-	// the loop runs in the monolith by default; set to false when
-	// running multiple replicas to keep notifications single-shot.
-	// CalendarPollInterval / CalendarLookahead / CalendarFetchTimeout
-	// are duration strings parsed at use site (matches POLL_INTERVAL).
-	// CalendarDefaultReminderMin is the seed reminder window when a
-	// user adds a calendar URL.
-	EmbedCalendarPoller        bool
+	// Calendar feed knobs. CalendarPollInterval / CalendarLookahead /
+	// CalendarFetchTimeout are duration strings parsed at use site
+	// (matches POLL_INTERVAL). CalendarDefaultReminderMin is the seed
+	// reminder window when a user adds a calendar URL.
 	CalendarPollInterval       string
 	CalendarLookahead          string
 	CalendarFetchTimeout       string
@@ -193,23 +135,17 @@ func Load() (*Config, error) {
 		JiraWebhookURL:        os.Getenv("JIRA_WEBHOOK_URL"),
 		ProxyURL:              os.Getenv("PROXY_URL"),
 		NatsURL:               getEnvOrDefault("NATS_URL", "nats://localhost:4222"),
-		EmbedWebhookServer:    true,
 		WebhookSvcAddr:        getEnvOrDefault("WEBHOOK_SVC_ADDR", ":8081"),
 		WebhookSvcURL:         os.Getenv("WEBHOOK_SVC_URL"),
 		InternalAddr:          getEnvOrDefault("INTERNAL_ADDR", ":9080"),
 		InternalAuthToken:     os.Getenv("INTERNAL_AUTH_TOKEN"),
 		IdentitySvcURL:        os.Getenv("IDENTITY_SVC_URL"),
-		EmbedPoller:           true,
-		EmbedScheduler:        true,
-		EmbedPreferences:      true,
-		EmbedTelegramUpdates:  true,
 		PreferencesSvcURL:     os.Getenv("PREFERENCES_SVC_URL"),
 		PreferencesSvcAddr:    getEnvOrDefault("PREFERENCES_SVC_ADDR", ":9082"),
 		DedupRedisURL:         os.Getenv("DEDUP_REDIS_URL"),
 		OtelExporterEndpoint:  os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		OtelServiceName:       os.Getenv("OTEL_SERVICE_NAME"),
 
-		EmbedCalendarPoller:        true,
 		CalendarPollInterval:       getEnvOrDefault("CALENDAR_POLL_INTERVAL", "5m"),
 		CalendarLookahead:          getEnvOrDefault("CALENDAR_LOOKAHEAD", "24h"),
 		CalendarFetchTimeout:       getEnvOrDefault("CALENDAR_FETCH_TIMEOUT", "30s"),
@@ -217,13 +153,6 @@ func Load() (*Config, error) {
 		CalendarDefaultReminderMin: 15,
 	}
 
-	if v := os.Getenv("EMBED_CALENDAR_POLLER"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("EMBED_CALENDAR_POLLER must be a boolean (true/false/1/0)")
-		}
-		cfg.EmbedCalendarPoller = enabled
-	}
 	if v := os.Getenv("CALENDAR_DEFAULT_REMINDER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 1440 {
@@ -242,76 +171,12 @@ func Load() (*Config, error) {
 		cfg.OtelExporterInsecure = true
 	}
 
-	if v := os.Getenv("ENABLE_EVENT_PUBLISH"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("ENABLE_EVENT_PUBLISH must be a boolean (true/false/1/0)")
-		}
-		cfg.EnableEventPublish = enabled
-	}
-
-	if v := os.Getenv("EMBED_WEBHOOK_SERVER"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("EMBED_WEBHOOK_SERVER must be a boolean (true/false/1/0)")
-		}
-		cfg.EmbedWebhookServer = enabled
-	}
-
-	if v := os.Getenv("EMBED_POLLER"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("EMBED_POLLER must be a boolean (true/false/1/0)")
-		}
-		cfg.EmbedPoller = enabled
-	}
-
-	if v := os.Getenv("EMBED_SCHEDULER"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("EMBED_SCHEDULER must be a boolean (true/false/1/0)")
-		}
-		cfg.EmbedScheduler = enabled
-	}
-
-	if v := os.Getenv("EMBED_PREFERENCES"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("EMBED_PREFERENCES must be a boolean (true/false/1/0)")
-		}
-		cfg.EmbedPreferences = enabled
-	}
-
 	if v := os.Getenv("PERSIST_CONVERSATION_STATES"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
 			return nil, errors.New("PERSIST_CONVERSATION_STATES must be a boolean (true/false/1/0)")
 		}
 		cfg.PersistConversationStates = enabled
-	}
-
-	if v := os.Getenv("NOTIFY_VIA_EVENTS"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("NOTIFY_VIA_EVENTS must be a boolean (true/false/1/0)")
-		}
-		cfg.NotifyViaEvents = enabled
-	}
-
-	if v := os.Getenv("EMBED_TELEGRAM_UPDATES"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("EMBED_TELEGRAM_UPDATES must be a boolean (true/false/1/0)")
-		}
-		cfg.EmbedTelegramUpdates = enabled
-	}
-
-	if v := os.Getenv("TELEGRAM_SVC_UPDATES"); v != "" {
-		enabled, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, errors.New("TELEGRAM_SVC_UPDATES must be a boolean (true/false/1/0)")
-		}
-		cfg.TelegramSvcUpdates = enabled
 	}
 
 	if v := os.Getenv("ALLOW_UNSIGNED_WEBHOOKS"); v != "" {
@@ -344,21 +209,6 @@ func Load() (*Config, error) {
 		return nil, errors.New("ENCRYPTION_KEY_PREVIOUS must be exactly 64 hex characters (32 bytes) when set")
 	}
 
-	// JIRA_WEBHOOK_SECRET is optional in the sense that Jira Cloud's
-	// dynamic-webhook registration API does not expose a signing-secret
-	// field — operators wire it in out-of-band (e.g. through a Connect
-	// app or reverse-proxy hook). When empty, the webhook handler
-	// rejects every POST unless ALLOW_UNSIGNED_WEBHOOKS=true is set, so
-	// a misconfigured deploy fails closed instead of accepting forged
-	// events. The monolith only owns webhook ingress when
-	// EmbedWebhookServer is true; webhook-svc binaries must run the
-	// same check themselves via ValidateWebhookAuth().
-	if cfg.EmbedWebhookServer {
-		if err := cfg.ValidateWebhookAuth(); err != nil {
-			return nil, err
-		}
-	}
-
 	if v := os.Getenv("ADMIN_TELEGRAM_ID"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
@@ -378,9 +228,8 @@ func getEnvOrDefault(key, defaultVal string) string {
 }
 
 // ValidateWebhookAuth ensures the webhook endpoint has some form of
-// authentication configured. Called once at startup by every binary
-// that serves /webhook (monolith via Load when EmbedWebhookServer is
-// true, webhook-svc directly).
+// authentication configured. Called once at startup by cmd/webhook-svc,
+// the only binary that serves /webhook.
 func (c *Config) ValidateWebhookAuth() error {
 	if c.JiraWebhookSecret == "" && !c.AllowUnsignedWebhooks {
 		return errors.New("JIRA_WEBHOOK_SECRET is empty and ALLOW_UNSIGNED_WEBHOOKS=true was not set; refusing to expose /webhook with unauthenticated ingress")

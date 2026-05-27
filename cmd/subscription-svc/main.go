@@ -1,17 +1,12 @@
-// Command subscription-svc is the Phase-3 extraction of the Jira
-// polling loop from the SleepJiraBot monolith. It shares Mongo (and
-// optionally NATS) with the bot process and owns:
+// Command subscription-svc owns the Jira polling loop of the
+// SleepJiraBot microservice fleet. It shares Mongo and NATS with the rest
+// of the fleet and owns:
 //   - periodic Jira polling for every stored subscription
-//   - detection and merged-change fan-out to Telegram
-//   - ChangeDetected event publishing (when NATS is enabled)
+//   - detection and merged-change fan-out as NotifyRequested events
+//   - ChangeDetected event publishing
 //
-// The monolith keeps its own embedded poller until EMBED_POLLER=false,
-// so running subscription-svc is additive: deploy the container, then
-// flip the monolith flag.
-//
-// The service talks to identity-svc via IDENTITY_SVC_URL for tokens
-// (falls back to an in-process LocalProvider when empty) so it never
-// needs the OAuth client secret in the remote case.
+// The service leases tokens from identity-svc via IDENTITY_SVC_URL so it
+// never needs the OAuth client secret to refresh.
 package main
 
 import (
@@ -28,21 +23,17 @@ import (
 
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
-	"SleepJiraBot/internal/identity"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
 	"SleepJiraBot/internal/notifydedup"
 	"SleepJiraBot/internal/poller"
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
-	eventsv1 "SleepJiraBot/pkg/events/v1"
 	"SleepJiraBot/pkg/health"
 	"SleepJiraBot/pkg/identityclient"
 	"SleepJiraBot/pkg/natsx"
 	"SleepJiraBot/pkg/notifier"
 	"SleepJiraBot/pkg/telemetry"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
@@ -105,24 +96,20 @@ func main() {
 	userRepo := storage.NewUserRepo(mongo.Database(), enc)
 	subRepo := storage.NewSubscriptionRepo(mongo.Database())
 
-	var eventPub eventsv1.Publisher = eventsv1.NoopPublisher{}
-	var natsPub *natsx.JetStreamPublisher
-	if cfg.EnableEventPublish {
-		jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
-		if err != nil {
-			log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
-			return
-		}
-		if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
-			log.Error().Err(err).Msg("failed to ensure JetStream streams")
-			_ = jsPub.Close()
-			return
-		}
-		eventPub = jsPub
-		natsPub = jsPub
-		log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
-		defer func() { _ = jsPub.Close() }()
+	jsPub, err := natsx.Connect(ctx, cfg.NatsURL, log)
+	if err != nil {
+		log.Error().Err(err).Str("nats_url", cfg.NatsURL).Msg("failed to connect to NATS")
+		return
 	}
+	if err := jsPub.EnsureStreams(natsx.DefaultStreams()); err != nil {
+		log.Error().Err(err).Msg("failed to ensure JetStream streams")
+		_ = jsPub.Close()
+		return
+	}
+	defer func() { _ = jsPub.Close() }()
+	log.Info().Str("nats_url", cfg.NatsURL).Msg("connected to NATS JetStream")
+	eventPub := jsPub
+	natsPub := jsPub
 	subRepo.SetEventPublisher(eventPub)
 	userRepo.SetEventPublisher(eventPub)
 
@@ -144,35 +131,20 @@ func main() {
 	jiraClient.SetEventPublisher(eventPub)
 	jiraClient.StartCleanup(ctx)
 
-	var tokenProvider jira.TokenProvider
-	if cfg.IdentitySvcURL != "" {
-		remote, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
-		if err != nil {
-			log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
-			return
-		}
-		tokenProvider = remote
-		log.Info().Str("url", cfg.IdentitySvcURL).Msg("using remote identity-svc for token lease")
-	} else {
-		local := identity.NewLocalProvider(userRepo, oauthClient, log)
-		local.SetEventPublisher(eventPub)
-		tokenProvider = local
-		log.Info().Msg("using in-process local token provider")
+	if cfg.IdentitySvcURL == "" {
+		log.Error().Msg("IDENTITY_SVC_URL is required: Jira tokens are leased from identity-svc")
+		return
+	}
+	tokenProvider, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
+	if err != nil {
+		log.Error().Err(err).Str("url", cfg.IdentitySvcURL).Msg("invalid IDENTITY_SVC_URL")
+		return
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
+	log.Info().Str("url", cfg.IdentitySvcURL).Msg("leasing Jira tokens from identity-svc")
 
-	var sendNotifier notifier.Notifier
-	if cfg.NotifyViaEvents && cfg.EnableEventPublish {
-		sendNotifier = notifier.NewEvent(eventPub, log)
-		log.Info().Msg("notifier: publishing NotifyRequested events (external telegram-svc expected)")
-	} else {
-		tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramToken, tgbotapi.APIEndpoint, httpClient)
-		if err != nil {
-			log.Error().Err(err).Msg("subscription-svc: Telegram API init failed")
-			return
-		}
-		sendNotifier = notifier.NewDirect(tgAPI, log)
-	}
+	sendNotifier := notifier.NewEvent(eventPub, log)
+	log.Info().Msg("notifier: publishing NotifyRequested events; telegram-svc delivers")
 
 	pollInterval := mustDuration(cfg.PollInterval, 30*time.Second)
 	batchWindow := mustDuration(cfg.BatchWindow, time.Minute)
@@ -234,8 +206,7 @@ func main() {
 }
 
 // buildReadinessProbes returns the dependency checks /readyz runs.
-// Mongo is always required; NATS is checked only when the service
-// actually has a publisher (EnableEventPublish=false skips it).
+// Both Mongo and NATS are required; the nil guard is defensive.
 func buildReadinessProbes(mongo *storage.MongoDB, natsPub *natsx.JetStreamPublisher) []health.Probe {
 	probes := []health.Probe{{
 		Name:  "mongo",

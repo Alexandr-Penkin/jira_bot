@@ -42,7 +42,7 @@ type Handler struct {
 	api                 *tgbotapi.BotAPI
 	oauth               *jira.OAuthClient
 	jiraAPI             *jira.Client
-	callbackServer      *jira.CallbackServer
+	siteConnector       *jira.SiteConnector
 	userRepo            *storage.UserRepo
 	prefs               preferences.Provider
 	subRepo             *storage.SubscriptionRepo
@@ -106,8 +106,8 @@ func NewHandler(api *tgbotapi.BotAPI, oauth *jira.OAuthClient, jiraAPI *jira.Cli
 	}
 }
 
-func (h *Handler) SetCallbackServer(cs *jira.CallbackServer) {
-	h.callbackServer = cs
+func (h *Handler) SetSiteConnector(sc *jira.SiteConnector) {
+	h.siteConnector = sc
 }
 
 // useStateStore swaps the FSM backend on the handler's state manager.

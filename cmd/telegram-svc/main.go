@@ -1,28 +1,19 @@
 // Command telegram-svc owns the Telegram-facing slice of the
-// SleepJiraBot DDD split.
+// SleepJiraBot microservice fleet. It runs two roles in one process:
 //
-// Phase 6a — NotifyRequested consumer. Producers (bot, poller,
-// scheduler, webhook) set NOTIFY_VIA_EVENTS=true to route their Send
-// calls through the event bus instead of calling tgbotapi directly.
-// telegram-svc is the only subscriber of sjb.notify.requested.v1 —
-// ack on success, nak-with-delay on Telegram API errors (at most
-// ~5 deliveries before the message is dropped into JetStream's
-// terminal state).
+//   - NotifyRequested consumer. Producers (bot calendar poller,
+//     subscription-svc, scheduler-svc, webhook-svc) publish
+//     NotifyRequested events; telegram-svc is the only subscriber of
+//     sjb.notify.requested.v1 — ack on success, nak-with-delay on
+//     Telegram API errors (at most ~5 deliveries before the message is
+//     dropped into JetStream's terminal state).
 //
-// Phase 6b — opt-in update handling. When TELEGRAM_SVC_UPDATES=true,
-// the service additionally constructs the full dependency graph
-// (Mongo repos, OAuth, Jira client, preferences provider, webhook
-// manager) and runs `telegram.Bot.Start(ctx)` — the same long-poll
-// Handler code the monolith uses, just hosted here. Only one process
-// may call getUpdates at a time, so the monolith must be started with
-// EMBED_TELEGRAM_UPDATES=false when this flag is on.
-//
-// Known limitation in Phase 6b: the OAuth multi-site selection flow
-// relies on an in-memory pending-site map inside the monolith's
-// CallbackServer. When updates run here but the OAuth callback still
-// runs on cmd/bot, clicking the site-selection button reaches this
-// process's Handler with a nil callbackServer and degrades to a
-// generic error. Single-site OAuth is unaffected.
+//   - Update handler. It constructs the full dependency graph (Mongo
+//     repos, OAuth, Jira client leased through identity-svc, preferences
+//     through preferences-svc, webhook manager) and runs the long-poll
+//     `telegram.Bot.Start(ctx)`. It is the only process that calls
+//     getUpdates. The multi-site OAuth selection started by cmd/bot's
+//     /callback finalizes here via a shared Mongo-backed SiteConnector.
 package main
 
 import (
@@ -49,10 +40,8 @@ import (
 	"SleepJiraBot/internal/calendar"
 	"SleepJiraBot/internal/config"
 	"SleepJiraBot/internal/crypto"
-	"SleepJiraBot/internal/identity"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/logger"
-	"SleepJiraBot/internal/preferences"
 	"SleepJiraBot/internal/proxy"
 	"SleepJiraBot/internal/storage"
 	"SleepJiraBot/internal/telegram"
@@ -103,12 +92,16 @@ func main() {
 	log := logger.New(cfg.LogLevel).With().Str("svc", "telegram-svc").Logger()
 	log.Info().Msg("starting telegram-svc")
 
-	if !cfg.EnableEventPublish {
-		log.Error().Msg("telegram-svc requires ENABLE_EVENT_PUBLISH=true to consume NotifyRequested events")
+	if cfg.IdentitySvcURL == "" {
+		log.Error().Msg("IDENTITY_SVC_URL is required: Jira tokens are leased from identity-svc")
 		return
 	}
-	if cfg.TelegramToken == "" {
-		log.Error().Msg("TELEGRAM_TOKEN is required")
+	if cfg.PreferencesSvcURL == "" {
+		log.Error().Msg("PREFERENCES_SVC_URL is required: preferences resolve through preferences-svc")
+		return
+	}
+	if cfg.WebhookSvcURL == "" {
+		log.Error().Msg("WEBHOOK_SVC_URL is required: admin stats source the webhook counter from webhook-svc")
 		return
 	}
 
@@ -191,24 +184,21 @@ func main() {
 		runConsumer(ctx, sub, tgAPI, jsPub, log)
 	}()
 
-	// Phase 6b: opt-in update handling. Constructs the full dependency
-	// graph the monolith builds for its Handler and starts the same
-	// long-poll receive loop in this process. Only enabled when
-	// TELEGRAM_SVC_UPDATES=true; the monolith must be run with
-	// EMBED_TELEGRAM_UPDATES=false so updates reach a single consumer.
-	if cfg.TelegramSvcUpdates {
-		bot, cleanup, err := startUpdateHandler(ctx, cfg, tgAPI, httpClient, jsPub, log)
-		if err != nil {
-			log.Error().Err(err).Msg("failed to start telegram-svc update handler")
-			cancel()
-		} else {
-			defer cleanup()
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				bot.Start(ctx)
-			}()
-		}
+	// telegram-svc is the sole Telegram update consumer: it builds the
+	// full handler dependency graph and runs the long-poll receive loop
+	// alongside the notify consumer above. Only one process may call
+	// getUpdates, so no other service runs bot.Start.
+	bot, cleanup, err := startUpdateHandler(ctx, cfg, tgAPI, httpClient, jsPub, log)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to start telegram-svc update handler")
+		cancel()
+	} else {
+		defer cleanup()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bot.Start(ctx)
+		}()
 	}
 
 	wg.Add(1)
@@ -376,6 +366,10 @@ func startUpdateHandler(
 	if err := oauthStateRepo.EnsureIndexes(ctx); err != nil {
 		log.Warn().Err(err).Msg("telegram-svc: failed to ensure oauth_states TTL index; continuing")
 	}
+	oauthPendingRepo := storage.NewOAuthPendingRepo(mongoClient.Database(), enc)
+	if err := oauthPendingRepo.EnsureIndexes(ctx); err != nil {
+		log.Warn().Err(err).Msg("telegram-svc: failed to ensure oauth_pending_sites TTL index; continuing")
+	}
 
 	subRepo.SetEventPublisher(eventPub)
 	userRepo.SetEventPublisher(eventPub)
@@ -393,39 +387,24 @@ func startUpdateHandler(
 	jiraClient.SetEventPublisher(eventPub)
 	jiraClient.StartCleanup(ctx)
 
-	// Route token refresh through identity-svc when IDENTITY_SVC_URL is
-	// set so there is a single refresh owner across the fleet. Fall
-	// back to an in-process LocalProvider for single-process dev.
-	var tokenProvider jira.TokenProvider
-	if cfg.IdentitySvcURL != "" {
-		remote, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
-		if err != nil {
-			cleanup()
-			return nil, nil, err
-		}
-		tokenProvider = remote
-		log.Info().Str("url", cfg.IdentitySvcURL).Msg("telegram-svc: using remote identity-svc for token lease")
-	} else {
-		local := identity.NewLocalProvider(userRepo, oauthClient, log)
-		local.SetEventPublisher(eventPub)
-		tokenProvider = local
+	// Jira tokens are leased from identity-svc so it is the single refresh
+	// owner across the fleet.
+	tokenProvider, err := identityclient.New(cfg.IdentitySvcURL, cfg.InternalAuthToken, nil)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
 	}
 	jiraClient.SetTokenProvider(tokenProvider)
+	log.Info().Str("url", cfg.IdentitySvcURL).Msg("telegram-svc: leasing Jira tokens from identity-svc")
 
 	webhookMgr := jira.NewWebhookManager(jiraClient, userRepo, webhookRepo, cfg.JiraWebhookURL, log)
 
-	var prefsProvider preferences.Provider
-	if cfg.PreferencesSvcURL != "" && !cfg.EmbedPreferences {
-		remote, err := preferencesclient.New(cfg.PreferencesSvcURL, cfg.InternalAuthToken, nil)
-		if err != nil {
-			cleanup()
-			return nil, nil, err
-		}
-		prefsProvider = remote
-		log.Info().Str("url", cfg.PreferencesSvcURL).Msg("telegram-svc: routing preferences through remote preferences-svc")
-	} else {
-		prefsProvider = preferences.NewLocalProvider(userRepo, log)
+	prefsProvider, err := preferencesclient.New(cfg.PreferencesSvcURL, cfg.InternalAuthToken, nil)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
 	}
+	log.Info().Str("url", cfg.PreferencesSvcURL).Msg("telegram-svc: routing preferences through remote preferences-svc")
 
 	bot, err := telegram.NewBot(
 		cfg.TelegramToken,
@@ -446,21 +425,25 @@ func startUpdateHandler(
 		return nil, nil, err
 	}
 
-	// Wire admin stats: webhookRepo for the count of registered webhooks,
-	// and (when WEBHOOK_SVC_URL is set) a remote fetcher for the running
-	// event counter from webhook-svc. Without this, `/admin → Stats` and
-	// `/diagnose`'s webhook section silently read nil and print zeros —
-	// which is what masked the resync/diagnose divergence before.
-	var eventsFn func() int64
-	if cfg.WebhookSvcURL != "" {
-		eventsFn = webhookstats.RemoteFetcher(cfg.WebhookSvcURL, cfg.InternalAuthToken, httpClient, log)
-		log.Info().Str("url", cfg.WebhookSvcURL).Msg("telegram-svc: admin stats events_received sourced from webhook-svc")
-	}
+	// SiteConnector backs the multi-site OAuth selection: the /callback in
+	// cmd/bot stages the pending choice in Mongo and this process finalizes
+	// it when the user taps a site button. bot.API() is the same Telegram
+	// client the handler uses, so confirmations come from one place.
+	siteConnector := jira.NewSiteConnector(oauthClient, userRepo, subRepo, webhookMgr, oauthPendingRepo, bot.API(), log)
+	siteConnector.SetEventPublisher(eventPub)
+	bot.SetSiteConnector(siteConnector)
+
+	// Admin stats: webhookRepo for the count of registered webhooks, and a
+	// remote fetcher for the running event counter from webhook-svc (which
+	// owns ingress). Without this, `/admin → Stats` and `/diagnose`'s
+	// webhook section read zeros.
+	eventsFn := webhookstats.RemoteFetcher(cfg.WebhookSvcURL, cfg.InternalAuthToken, httpClient, log)
+	log.Info().Str("url", cfg.WebhookSvcURL).Msg("telegram-svc: admin stats events_received sourced from webhook-svc")
 	bot.SetWebhookStats(webhookRepo, eventsFn)
 
 	// Calendar URL validation handshake from the menu uses its own
-	// fetcher. Calendar polling is owned by the monolith (cmd/bot)
-	// via EMBED_CALENDAR_POLLER; telegram-svc is only the UI here.
+	// fetcher. Calendar polling is owned by cmd/bot; telegram-svc is only
+	// the UI here.
 	calFetchTimeout, perr := time.ParseDuration(cfg.CalendarFetchTimeout)
 	if perr != nil || calFetchTimeout <= 0 {
 		calFetchTimeout = calendar.DefaultFetchTimeout
