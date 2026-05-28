@@ -322,6 +322,39 @@ func TestPoller_ReminderFiresInWindow(t *testing.T) {
 	require.NotContains(t, notif.reasons(), "calendar:reminder")
 }
 
+func TestPoller_ReminderFiresEvenWhenLagExceedsInterval(t *testing.T) {
+	// Regression: the reminder gate used to require
+	// `now.Sub(reminderAt) <= p.interval`, so when the poll cadence was
+	// shorter than the time already elapsed since reminderAt (e.g. a
+	// 60s poll catching a reminder whose reminderAt was 5 minutes ago,
+	// or any cycle drift past the interval), the reminder was silently
+	// dropped and no later cycle ever picked it up. The ReminderSent
+	// flag is the only idempotency guard now — any cycle inside the
+	// lead window is allowed to fire.
+	now := time.Now()
+	user := storage.User{
+		TelegramUserID:          42,
+		CalendarURL:             "https://x.test/cal.ics",
+		CalendarNotifyEnabled:   true,
+		CalendarReminderMinutes: 15,
+		CalendarLastFetchedAt:   now.Unix() - 600,
+	}
+	ur := &fakeUserRepo{users: []storage.User{user}}
+	er := newMemEventRepo()
+	notif := &recordingNotifier{}
+
+	// Event starts in 10 minutes; reminderAt = now-5m. With interval=1m
+	// the previous gate (5m <= 1m) was false and the reminder was lost.
+	events := []calendar.Event{
+		{UID: "soon", Summary: "Stand-up", Start: now.Add(10 * time.Minute)},
+	}
+	p := newTestPoller(t, ur, er, stubFetcher{body: []byte("ok")}, stubParser{events: events}, notif)
+	p.interval = 1 * time.Minute
+	p.pollAll(context.Background())
+
+	require.Contains(t, notif.reasons(), "calendar:reminder")
+}
+
 func TestPoller_DisabledUserSkipped(t *testing.T) {
 	user := storage.User{
 		TelegramUserID:        42,

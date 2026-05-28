@@ -305,19 +305,30 @@ func (p *Poller) pollUser(ctx context.Context, user *storage.User) {
 			}
 		}
 
-		// Reminder window: notify if the instance is starting within
-		// (reminderMins, reminderMins+interval] from now. Skip when
-		// the durable flag says we already did it.
+		// Reminder window: fire once when the instance enters
+		// [reminderAt, start). Idempotency is guaranteed by the durable
+		// ReminderSent flag (plus the dedup TTL). The previous gate also
+		// required `now.Sub(reminderAt) <= p.interval`, but that catches
+		// only the first cycle after reminderAt — when the poll cadence
+		// drifts past the interval (e.g. a 60s ticker with any processing
+		// latency or a 60s reminder lead) the window is silently missed
+		// and no later cycle picks it up. The ReminderSent flag alone is
+		// sufficient: it lets any cycle inside the lead window catch the
+		// reminder, and prevents re-fire once we've sent.
 		reminderAt := inst.Start.Add(-reminderWindow)
-		if now.After(reminderAt) || now.Equal(reminderAt) {
-			if inst.Start.After(now) && now.Sub(reminderAt) <= p.interval {
-				prevSent := change.Prev != nil && change.Prev.ReminderSent
-				if !prevSent && p.allow(user.TelegramUserID, "reminder", inst) {
-					if err := p.sendReminder(ctx, user, lang, inst, reminderMins); err != nil {
-						p.log.Warn().Err(err).Msg("calendar poller: send reminder failed")
-					} else {
-						_ = p.eventRepo.MarkReminderSent(ctx, user.TelegramUserID, inst.UID, inst.Start.Unix())
-					}
+		if now.After(reminderAt) && inst.Start.After(now) {
+			prevSent := change.Prev != nil && change.Prev.ReminderSent
+			if !prevSent && p.allow(user.TelegramUserID, "reminder", inst) {
+				if err := p.sendReminder(ctx, user, lang, inst, reminderMins); err != nil {
+					p.log.Warn().Err(err).Msg("calendar poller: send reminder failed")
+				} else {
+					p.log.Info().
+						Int64("user_id", user.TelegramUserID).
+						Str("uid", inst.UID).
+						Time("start", inst.Start).
+						Int("lead_min", reminderMins).
+						Msg("calendar poller: reminder sent")
+					_ = p.eventRepo.MarkReminderSent(ctx, user.TelegramUserID, inst.UID, inst.Start.Unix())
 				}
 			}
 		}
