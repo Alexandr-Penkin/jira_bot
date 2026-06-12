@@ -197,6 +197,26 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 		h.states.Set(chatID, userID, "sprint_project", nil)
 		h.handleSprintStart(chatID, h.getLang(ctx, userID))
 		return tgbotapi.MessageConfig{}
+	case "kanban":
+		kanbanArgs := strings.TrimSpace(args)
+		if kanbanArgs != "" {
+			argParts := strings.Fields(kanbanArgs)
+			projectKey := strings.ToUpper(argParts[0])
+			if !validateProjectKey(projectKey) {
+				return tgbotapi.NewMessage(chatID, locale.T(h.getLang(ctx, userID), "watch.invalid_project_short"))
+			}
+			daysArg := ""
+			if len(argParts) > 1 {
+				daysArg = argParts[1]
+			}
+			return h.handleKanbanFull(ctx, chatID, userID, projectKey, daysArg)
+		}
+		if user, _ := h.userRepo.GetByTelegramID(ctx, userID); user != nil && user.DefaultProject != "" {
+			return h.handleKanbanFull(ctx, chatID, userID, user.DefaultProject, "")
+		}
+		h.states.Set(chatID, userID, "kanban_project", nil)
+		h.handleKanbanStart(chatID, h.getLang(ctx, userID))
+		return tgbotapi.MessageConfig{}
 	case "daily":
 		if args := message.CommandArguments(); strings.TrimSpace(args) != "" {
 			return h.handleDailySearch(ctx, chatID, userID, strings.TrimSpace(args))
@@ -395,6 +415,8 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDefaultsIssueTypeCallback(ctx, cq, parts)
 	case "sprint_board", "sprint_report":
 		h.handleSprintCallback(ctx, cq, parts)
+	case "kanban_report":
+		h.handleKanbanCallback(ctx, cq, parts)
 	case "it_toggle":
 		if len(parts) >= 2 {
 			h.handleIssueTypeToggle(ctx, cq, parts[1])
@@ -591,6 +613,13 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		}
 		h.states.Set(chatID, userID, "sprint_project", nil)
 		h.handleSprintStart(chatID, lang)
+	case "kanban":
+		if user, _ := h.userRepo.GetByTelegramID(ctx, userID); user != nil && user.DefaultProject != "" {
+			h.sendMessage(h.handleKanbanFull(ctx, chatID, userID, user.DefaultProject, ""))
+			return
+		}
+		h.states.Set(chatID, userID, "kanban_project", nil)
+		h.handleKanbanStart(chatID, lang)
 	case "sched":
 		h.states.Set(chatID, userID, "schedule", nil)
 		h.sendPrompt(chatID, locale.T(lang, "schedule.enter"), lang)
@@ -733,6 +762,20 @@ func (h *Handler) handleTextInput(ctx context.Context, message *tgbotapi.Message
 			sprintHint = strings.TrimSpace(inputParts[2])
 		}
 		h.sendMessage(h.handleSprintFull(ctx, chatID, userID, projectKey, boardHint, sprintHint))
+
+	case "kanban_project":
+		h.states.Clear(chatID, userID)
+		inputParts := strings.Fields(text)
+		projectKey := strings.ToUpper(inputParts[0])
+		if !validateProjectKey(projectKey) {
+			h.sendMessage(tgbotapi.NewMessage(chatID, locale.T(lang, "watch.invalid_project_short")))
+			return
+		}
+		daysArg := ""
+		if len(inputParts) > 1 {
+			daysArg = inputParts[1]
+		}
+		h.sendMessage(h.handleKanbanFull(ctx, chatID, userID, projectKey, daysArg))
 
 	case "defaults_project":
 		h.states.Clear(chatID, userID)

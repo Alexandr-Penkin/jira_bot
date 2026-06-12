@@ -33,6 +33,7 @@ var en = map[string]string{
 		"/subscriptions — List active subscriptions\n\n" +
 		"*Reports:*\n" +
 		"/sprint `PROJ` — Sprint report with metrics\n" +
+		"/kanban `PROJ [days]` — Kanban flow report (throughput, cycle time, WIP)\n" +
 		"/schedule `cron | name | JQL` — Create a scheduled report\n" +
 		"/unschedule — Remove all schedules in this chat\n" +
 		"/schedules — List active schedules\n\n" +
@@ -331,6 +332,34 @@ var en = map[string]string{
 	"sprint.forecast_at_risk":  "at risk",
 	"sprint.days_left":         "%d days left",
 	"sprint.logged":            "Logged",
+
+	// Kanban
+	"btn.kanban":             "📈 Kanban Report",
+	"kanban.enter_project":   "Enter project key, optionally with a period in days (e.g. `PROJ` or `PROJ 14`):",
+	"kanban.choose_period":   "Choose report period:",
+	"kanban.period_days":     "%d days",
+	"kanban.invalid_days":    "Invalid period. Specify a number of days from 1 to %d.",
+	"kanban.report_failed":   "Failed to generate kanban report.",
+	"kanban.no_issues":       "No issues found for this project and period.",
+	"kanban.report_title":    "Kanban Report",
+	"kanban.period":          "last %d days",
+	"kanban.throughput":      "Throughput",
+	"kanban.issues_n":        "%d issues",
+	"kanban.per_week":        "%.1f/week",
+	"kanban.weekly":          "by week: %s",
+	"kanban.cycle_time":      "Cycle Time",
+	"kanban.cycle_detail":    "avg %s | median %s | p85 %s (%d issues)",
+	"kanban.lead_time":       "Lead Time",
+	"kanban.lead_detail":     "avg %s | median %s",
+	"kanban.wip":             "Work in Progress",
+	"kanban.item_age":        "Work Item Age",
+	"kanban.age_detail":      "avg %s | max %s",
+	"kanban.oldest":          "oldest",
+	"kanban.blocked_time":    "Blocked Time",
+	"kanban.flow_efficiency": "Flow Efficiency",
+	"kanban.by_type":         "By Issue Type",
+	"kanban.by_assignee":     "By Assignee",
+	"kanban.cycle_avg":       "cycle avg %s",
 
 	// Issue Types settings
 	"issuetypes.enter_project": "Enter project key to load issue types (e.g. `PROJ`):",

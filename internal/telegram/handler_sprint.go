@@ -975,32 +975,7 @@ func computeChangelogMetrics(issues []jira.Issue, sprintName string, sprintStart
 			}
 
 			// Blocked time: sum time in hold statuses.
-			var blockedStart time.Time
-			var issueBlockedH float64
-			for _, h := range issues[i].Changelog.Histories { //nolint:gosec // i is always a valid index
-				for _, item := range h.Items {
-					if !strings.EqualFold(item.Field, "status") {
-						continue
-					}
-					ts, parseErr := parseJiraTime(h.Created)
-					if parseErr != nil {
-						continue
-					}
-					toLower := strings.ToLower(item.ToString)
-					fromLower := strings.ToLower(item.FromString)
-					if isHoldStatus(toLower, holdStatuses) && blockedStart.IsZero() {
-						blockedStart = ts
-					}
-					if isHoldStatus(fromLower, holdStatuses) && !blockedStart.IsZero() {
-						issueBlockedH += ts.Sub(blockedStart).Hours()
-						blockedStart = time.Time{}
-					}
-				}
-			}
-			if !blockedStart.IsZero() {
-				issueBlockedH += time.Since(blockedStart).Hours()
-			}
-			if issueBlockedH > 0 {
+			if issueBlockedH := sumHoldHours(issues[i].Changelog.Histories, holdStatuses, time.Now()); issueBlockedH > 0 { //nolint:gosec // i is always a valid index
 				m.totalBlockedH += issueBlockedH
 				m.blockedCount++
 			}

@@ -33,6 +33,7 @@ var ru = map[string]string{
 		"/subscriptions — Список подписок\n\n" +
 		"*Отчёты:*\n" +
 		"/sprint `PROJ` — Отчёт по спринту с метриками\n" +
+		"/kanban `PROJ [дни]` — Канбан-отчёт (throughput, cycle time, WIP)\n" +
 		"/schedule `cron | имя | JQL` — Создать отчёт по расписанию\n" +
 		"/unschedule — Удалить все расписания\n" +
 		"/schedules — Список расписаний\n\n" +
@@ -331,6 +332,34 @@ var ru = map[string]string{
 	"sprint.forecast_at_risk":  "под угрозой",
 	"sprint.days_left":         "%d дн. осталось",
 	"sprint.logged":            "Списано",
+
+	// Kanban
+	"btn.kanban":             "📈 Канбан-отчёт",
+	"kanban.enter_project":   "Введите ключ проекта, опционально с периодом в днях (напр. `PROJ` или `PROJ 14`):",
+	"kanban.choose_period":   "Выберите период отчёта:",
+	"kanban.period_days":     "%d дней",
+	"kanban.invalid_days":    "Некорректный период. Укажите число дней от 1 до %d.",
+	"kanban.report_failed":   "Не удалось сгенерировать канбан-отчёт.",
+	"kanban.no_issues":       "Задачи для этого проекта и периода не найдены.",
+	"kanban.report_title":    "Канбан-отчёт",
+	"kanban.period":          "последние %d дней",
+	"kanban.throughput":      "Throughput",
+	"kanban.issues_n":        "%d задач",
+	"kanban.per_week":        "%.1f/нед",
+	"kanban.weekly":          "по неделям: %s",
+	"kanban.cycle_time":      "Cycle Time",
+	"kanban.cycle_detail":    "сред %s | медиана %s | p85 %s (%d задач)",
+	"kanban.lead_time":       "Lead Time",
+	"kanban.lead_detail":     "сред %s | медиана %s",
+	"kanban.wip":             "В работе (WIP)",
+	"kanban.item_age":        "Возраст задач в работе",
+	"kanban.age_detail":      "сред %s | макс %s",
+	"kanban.oldest":          "самые старые",
+	"kanban.blocked_time":    "Время блокировки",
+	"kanban.flow_efficiency": "Эффективность потока",
+	"kanban.by_type":         "По типу задач",
+	"kanban.by_assignee":     "По исполнителям",
+	"kanban.cycle_avg":       "cycle сред %s",
 
 	// Настройка типов задач
 	"issuetypes.enter_project": "Введите ключ проекта для загрузки типов задач (например `PROJ`):",
