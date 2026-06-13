@@ -194,7 +194,7 @@ func TestPercentile(t *testing.T) {
 
 func TestKanbanDoneJQL(t *testing.T) {
 	assert.Equal(t,
-		"statusCategory = Done AND updated >= -30d ORDER BY updated DESC",
+		`statusCategory = "Done" AND updated >= -30d ORDER BY updated DESC`,
 		kanbanDoneJQL(30, nil))
 
 	assert.Equal(t,
@@ -204,11 +204,11 @@ func TestKanbanDoneJQL(t *testing.T) {
 
 func TestKanbanWIPJQL(t *testing.T) {
 	assert.Equal(t,
-		"statusCategory = indeterminate ORDER BY created ASC",
+		`statusCategory = "In Progress" ORDER BY created ASC`,
 		kanbanWIPJQL(nil))
 
 	assert.Equal(t,
-		`statusCategory = indeterminate AND status not in ("Done") ORDER BY created ASC`,
+		`statusCategory = "In Progress" AND status not in ("Done") ORDER BY created ASC`,
 		kanbanWIPJQL([]string{"Done"}))
 }
 

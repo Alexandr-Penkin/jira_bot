@@ -229,12 +229,15 @@ func kanbanDoneJQL(days int, doneStatuses []string) string {
 	if len(doneStatuses) > 0 {
 		return fmt.Sprintf("status in (%s) AND updated >= -%dd ORDER BY updated DESC", quoteJQLStrings(doneStatuses), days)
 	}
-	return fmt.Sprintf("statusCategory = Done AND updated >= -%dd ORDER BY updated DESC", days)
+	// JQL statusCategory matches on the category NAME ("Done"), not the
+	// REST API key ("done").
+	return fmt.Sprintf(`statusCategory = "Done" AND updated >= -%dd ORDER BY updated DESC`, days)
 }
 
 // kanbanWIPJQL restricts a board query to issues currently in progress.
 func kanbanWIPJQL(doneStatuses []string) string {
-	jql := "statusCategory = indeterminate"
+	// "In Progress" is the JQL name of the indeterminate status category.
+	jql := `statusCategory = "In Progress"`
 	if len(doneStatuses) > 0 {
 		jql += fmt.Sprintf(" AND status not in (%s)", quoteJQLStrings(doneStatuses))
 	}
