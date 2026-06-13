@@ -340,7 +340,7 @@ var en = map[string]string{
 	"kanban.period_days":     "%d days",
 	"kanban.invalid_days":    "Invalid period. Specify a number of days from 1 to %d.",
 	"kanban.report_failed":   "Failed to generate kanban report.",
-	"kanban.no_issues":       "No issues found for this project and period.",
+	"kanban.no_issues":       "No issues found for this board and period.",
 	"kanban.report_title":    "Kanban Report",
 	"kanban.period":          "last %d days",
 	"kanban.throughput":      "Throughput",

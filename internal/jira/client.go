@@ -482,6 +482,75 @@ func (c *Client) SearchIssuesForSprintReport(ctx context.Context, user *storage.
 	return result, nil
 }
 
+// SearchBoardIssuesForReport returns issues belonging to a board (the
+// board's saved filter scopes them), with story points, custom assignee,
+// changelog, and the created/updated timestamps the kanban report needs.
+// The jql argument adds further constraints on top of the board filter.
+func (c *Client) SearchBoardIssuesForReport(ctx context.Context, user *storage.User, boardID int, jql string, maxResults int, assigneeFieldID string) (*SearchResult, error) {
+	fields := storyPointsQueryFields(user.StoryPointsFieldID) + ",created,updated"
+	if assigneeFieldID != "" {
+		fields += "," + assigneeFieldID
+	}
+	params := url.Values{
+		"maxResults": {fmt.Sprintf("%d", maxResults)},
+		"fields":     {fields},
+		"expand":     {"changelog"},
+	}
+	if jql != "" {
+		params.Set("jql", jql)
+	}
+	path := fmt.Sprintf("/board/%d/issue?%s", boardID, params.Encode())
+
+	body, err := c.doAgileRequest(ctx, user, path)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		StartAt    int `json:"startAt"`
+		MaxResults int `json:"maxResults"`
+		Total      int `json:"total"`
+		Issues     []struct {
+			ID        string          `json:"id"`
+			Key       string          `json:"key"`
+			Self      string          `json:"self"`
+			Fields    json.RawMessage `json:"fields"`
+			Changelog *Changelog      `json:"changelog,omitempty"`
+		} `json:"issues"`
+	}
+	if err = json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode board issues: %w", err)
+	}
+
+	result := &SearchResult{
+		StartAt:    raw.StartAt,
+		MaxResults: raw.MaxResults,
+		Total:      raw.Total,
+		Issues:     make([]Issue, len(raw.Issues)),
+	}
+
+	for i, ri := range raw.Issues {
+		result.Issues[i].ID = ri.ID
+		result.Issues[i].Key = ri.Key
+		result.Issues[i].Self = ri.Self
+		result.Issues[i].Changelog = ri.Changelog
+
+		if err = json.Unmarshal(ri.Fields, &result.Issues[i].Fields); err != nil {
+			return nil, fmt.Errorf("decode issue fields: %w", err)
+		}
+
+		var extra map[string]json.RawMessage
+		if err = json.Unmarshal(ri.Fields, &extra); err == nil {
+			result.Issues[i].Fields.StoryPoints = extractStoryPoints(extra, user.StoryPointsFieldID)
+			if assigneeFieldID != "" {
+				result.Issues[i].Fields.CustomAssignee = extractUserField(extra, assigneeFieldID)
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // SearchIssuesWithChangelog searches issues and includes recent changelog.
 func (c *Client) SearchIssuesWithChangelog(ctx context.Context, user *storage.User, jql string, maxResults int) (*SearchResult, error) {
 	params := url.Values{
@@ -528,7 +597,7 @@ func (c *Client) GetBoards(ctx context.Context, user *storage.User, projectKey s
 		}
 		path := "/board?" + params.Encode()
 
-		body, err := c.doAgileRequest(ctx, user, http.MethodGet, path, nil)
+		body, err := c.doAgileRequest(ctx, user, path)
 		if err != nil {
 			return nil, err
 		}
@@ -552,10 +621,24 @@ func (c *Client) GetBoards(ctx context.Context, user *storage.User, projectKey s
 	return all, nil
 }
 
+// GetBoard returns a single board by ID.
+func (c *Client) GetBoard(ctx context.Context, user *storage.User, boardID int) (*Board, error) {
+	path := fmt.Sprintf("/board/%d", boardID)
+	body, err := c.doAgileRequest(ctx, user, path)
+	if err != nil {
+		return nil, err
+	}
+	var board Board
+	if err = json.Unmarshal(body, &board); err != nil {
+		return nil, fmt.Errorf("decode board: %w", err)
+	}
+	return &board, nil
+}
+
 // GetSprint returns a single sprint by ID.
 func (c *Client) GetSprint(ctx context.Context, user *storage.User, sprintID int) (*Sprint, error) {
 	path := fmt.Sprintf("/sprint/%d", sprintID)
-	body, err := c.doAgileRequest(ctx, user, http.MethodGet, path, nil)
+	body, err := c.doAgileRequest(ctx, user, path)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +663,7 @@ func (c *Client) GetSprints(ctx context.Context, user *storage.User, boardID int
 		}
 		path := fmt.Sprintf("/board/%d/sprint?%s", boardID, params.Encode())
 
-		body, err := c.doAgileRequest(ctx, user, http.MethodGet, path, nil)
+		body, err := c.doAgileRequest(ctx, user, path)
 		if err != nil {
 			return nil, err
 		}
@@ -608,14 +691,16 @@ func (c *Client) GetSprints(ctx context.Context, user *storage.User, boardID int
 	return all, nil
 }
 
-func (c *Client) doAgileRequest(ctx context.Context, user *storage.User, method, path string, reqBody io.Reader) ([]byte, error) {
+// doAgileRequest performs a GET against the Jira Agile API. All Agile
+// endpoints used here are read-only, so the method is fixed to GET.
+func (c *Client) doAgileRequest(ctx context.Context, user *storage.User, path string) ([]byte, error) {
 	accessToken, cloudID, err := c.ensureValidToken(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("ensure valid token: %w", err)
 	}
 
 	apiURL := fmt.Sprintf(agileBaseURL, cloudID) + path
-	req, err := http.NewRequestWithContext(ctx, method, apiURL, reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +720,7 @@ func (c *Client) doAgileRequest(ctx context.Context, user *storage.User, method,
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Body: string(body)}
+		return nil, &HTTPError{Method: http.MethodGet, Path: path, Status: resp.StatusCode, Body: string(body)}
 	}
 
 	return body, nil

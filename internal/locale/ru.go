@@ -340,7 +340,7 @@ var ru = map[string]string{
 	"kanban.period_days":     "%d дней",
 	"kanban.invalid_days":    "Некорректный период. Укажите число дней от 1 до %d.",
 	"kanban.report_failed":   "Не удалось сгенерировать канбан-отчёт.",
-	"kanban.no_issues":       "Задачи для этого проекта и периода не найдены.",
+	"kanban.no_issues":       "Задачи для этой доски и периода не найдены.",
 	"kanban.report_title":    "Канбан-отчёт",
 	"kanban.period":          "последние %d дней",
 	"kanban.throughput":      "Throughput",

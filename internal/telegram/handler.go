@@ -211,8 +211,13 @@ func (h *Handler) routeCommand(ctx context.Context, message *tgbotapi.Message) t
 			}
 			return h.handleKanbanFull(ctx, chatID, userID, projectKey, daysArg)
 		}
-		if user, _ := h.userRepo.GetByTelegramID(ctx, userID); user != nil && user.DefaultProject != "" {
-			return h.handleKanbanFull(ctx, chatID, userID, user.DefaultProject, "")
+		if user, _ := h.userRepo.GetByTelegramID(ctx, userID); user != nil {
+			if user.DefaultBoardID != 0 {
+				return h.handleKanbanBoard(ctx, chatID, userID, user.DefaultBoardID, 0)
+			}
+			if user.DefaultProject != "" {
+				return h.handleKanbanFull(ctx, chatID, userID, user.DefaultProject, "")
+			}
 		}
 		h.states.Set(chatID, userID, "kanban_project", nil)
 		h.handleKanbanStart(chatID, h.getLang(ctx, userID))
@@ -415,7 +420,7 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, cq *tgbotapi.Callback
 		h.handleDefaultsIssueTypeCallback(ctx, cq, parts)
 	case "sprint_board", "sprint_report":
 		h.handleSprintCallback(ctx, cq, parts)
-	case "kanban_report":
+	case "kanban_board", "kanban_report":
 		h.handleKanbanCallback(ctx, cq, parts)
 	case "it_toggle":
 		if len(parts) >= 2 {
@@ -614,9 +619,15 @@ func (h *Handler) handleActionCallback(ctx context.Context, cq *tgbotapi.Callbac
 		h.states.Set(chatID, userID, "sprint_project", nil)
 		h.handleSprintStart(chatID, lang)
 	case "kanban":
-		if user, _ := h.userRepo.GetByTelegramID(ctx, userID); user != nil && user.DefaultProject != "" {
-			h.sendMessage(h.handleKanbanFull(ctx, chatID, userID, user.DefaultProject, ""))
-			return
+		if user, _ := h.userRepo.GetByTelegramID(ctx, userID); user != nil {
+			if user.DefaultBoardID != 0 {
+				h.sendMessage(h.handleKanbanBoard(ctx, chatID, userID, user.DefaultBoardID, 0))
+				return
+			}
+			if user.DefaultProject != "" {
+				h.sendMessage(h.handleKanbanFull(ctx, chatID, userID, user.DefaultProject, ""))
+				return
+			}
 		}
 		h.states.Set(chatID, userID, "kanban_project", nil)
 		h.handleKanbanStart(chatID, lang)

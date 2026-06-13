@@ -12,6 +12,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"golang.org/x/sync/errgroup"
 
+	"SleepJiraBot/internal/format"
 	"SleepJiraBot/internal/jira"
 	"SleepJiraBot/internal/locale"
 )
@@ -21,6 +22,7 @@ const (
 	kanbanDefaultDays = 30
 	kanbanMaxDays     = 90
 	kanbanOldestMax   = 5
+	kanbanBoardLimit  = 10
 )
 
 var kanbanPeriodChoices = []int{7, 14, kanbanDefaultDays}
@@ -30,23 +32,65 @@ func (h *Handler) handleKanbanStart(chatID int64, lang locale.Lang) {
 	h.sendPrompt(chatID, locale.T(lang, "kanban.enter_project"), lang)
 }
 
-// handleKanbanFull generates a report when the period is given,
-// otherwise shows period selection buttons.
+// handleKanbanFull resolves boards for a project and routes to board
+// selection (or straight to the report when there is a single board).
+// A valid daysArg skips the period picker downstream.
 func (h *Handler) handleKanbanFull(ctx context.Context, chatID, userID int64, projectKey, daysArg string) tgbotapi.MessageConfig {
 	lang := h.getLang(ctx, userID)
 
+	days := 0
 	if daysArg != "" {
-		days, err := strconv.Atoi(daysArg)
-		if err != nil || days < 1 || days > kanbanMaxDays {
+		d, err := strconv.Atoi(daysArg)
+		if err != nil || d < 1 || d > kanbanMaxDays {
 			return tgbotapi.NewMessage(chatID, locale.T(lang, "kanban.invalid_days", kanbanMaxDays))
 		}
-		return h.handleKanbanReport(ctx, chatID, userID, projectKey, days)
+		days = d
 	}
 
+	user, err := h.requireAuth(ctx, userID)
+	if err != nil {
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected"))
+	}
+
+	boards, err := h.jiraAPI.GetBoards(ctx, user, projectKey)
+	if err != nil {
+		h.log.Error().Err(err).Str("project", projectKey).Msg("kanban: failed to get boards")
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "sprint.boards_failed"))
+	}
+	if len(boards) == 0 {
+		return tgbotapi.NewMessage(chatID, locale.T(lang, "sprint.no_boards"))
+	}
+	if len(boards) == 1 {
+		return h.handleKanbanBoard(ctx, chatID, userID, boards[0].ID, days)
+	}
+
+	if len(boards) > kanbanBoardLimit {
+		boards = boards[:kanbanBoardLimit]
+	}
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(boards))
+	for _, b := range boards {
+		data := fmt.Sprintf("kanban_board:%d:%d", b.ID, days)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.Name, data),
+		))
+	}
+	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "sprint.choose_board"))
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	return msg
+}
+
+// handleKanbanBoard renders the report when a period is already chosen,
+// otherwise shows the period picker for the selected board.
+func (h *Handler) handleKanbanBoard(ctx context.Context, chatID, userID int64, boardID, days int) tgbotapi.MessageConfig {
+	if days > 0 {
+		return h.handleKanbanReport(ctx, chatID, userID, boardID, days)
+	}
+
+	lang := h.getLang(ctx, userID)
 	row := make([]tgbotapi.InlineKeyboardButton, 0, len(kanbanPeriodChoices))
 	for _, d := range kanbanPeriodChoices {
 		label := locale.T(lang, "kanban.period_days", d)
-		data := fmt.Sprintf("kanban_report:%s:%d", projectKey, d)
+		data := fmt.Sprintf("kanban_report:%d:%d", boardID, d)
 		row = append(row, tgbotapi.NewInlineKeyboardButtonData(label, data))
 	}
 	msg := tgbotapi.NewMessage(chatID, locale.T(lang, "kanban.choose_period"))
@@ -54,8 +98,9 @@ func (h *Handler) handleKanbanFull(ctx context.Context, chatID, userID int64, pr
 	return msg
 }
 
-// handleKanbanReport fetches completed and in-progress issues and renders flow metrics.
-func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, projectKey string, days int) tgbotapi.MessageConfig {
+// handleKanbanReport fetches the board's completed and in-progress issues
+// and renders flow metrics scoped to that board's filter.
+func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, boardID, days int) tgbotapi.MessageConfig {
 	lang := h.getLang(ctx, userID)
 
 	user, err := h.requireAuth(ctx, userID)
@@ -63,10 +108,15 @@ func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, 
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "error.not_connected"))
 	}
 
+	if days <= 0 {
+		days = kanbanDefaultDays
+	}
+
 	var doneResult, wipResult *jira.SearchResult
+	boardName := ""
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		res, searchErr := h.jiraAPI.SearchIssuesForSprintReport(gctx, user, kanbanDoneJQL(projectKey, days, user.DoneStatuses), kanbanIssueMax, user.AssigneeFieldID)
+		res, searchErr := h.jiraAPI.SearchBoardIssuesForReport(gctx, user, boardID, kanbanDoneJQL(days, user.DoneStatuses), kanbanIssueMax, user.AssigneeFieldID)
 		if searchErr != nil {
 			return searchErr
 		}
@@ -74,20 +124,31 @@ func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, 
 		return nil
 	})
 	g.Go(func() error {
-		res, searchErr := h.jiraAPI.SearchIssuesForSprintReport(gctx, user, kanbanWIPJQL(projectKey, user.DoneStatuses), kanbanIssueMax, user.AssigneeFieldID)
+		res, searchErr := h.jiraAPI.SearchBoardIssuesForReport(gctx, user, boardID, kanbanWIPJQL(user.DoneStatuses), kanbanIssueMax, user.AssigneeFieldID)
 		if searchErr != nil {
 			return searchErr
 		}
 		wipResult = res
 		return nil
 	})
+	// Board name is cosmetic — never fail the report over it.
+	g.Go(func() error {
+		if b, boardErr := h.jiraAPI.GetBoard(gctx, user, boardID); boardErr == nil {
+			boardName = b.Name
+		}
+		return nil
+	})
 	if err = g.Wait(); err != nil {
-		h.log.Error().Err(err).Str("project", projectKey).Int("days", days).Msg("kanban: failed to search issues")
+		h.log.Error().Err(err).Int("board_id", boardID).Int("days", days).Msg("kanban: failed to search issues")
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "kanban.report_failed"))
 	}
 
 	if len(doneResult.Issues) == 0 && len(wipResult.Issues) == 0 {
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "kanban.no_issues"))
+	}
+
+	if boardName == "" {
+		boardName = fmt.Sprintf("#%d", boardID)
 	}
 
 	filterSet := make(map[string]bool, len(user.SprintIssueTypes))
@@ -101,7 +162,7 @@ func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, 
 		return tgbotapi.NewMessage(chatID, locale.T(lang, "kanban.no_issues"))
 	}
 
-	text := formatKanbanReport(lang, projectKey, days, user.SprintIssueTypes, m)
+	text := formatKanbanReport(lang, boardName, days, user.SprintIssueTypes, m)
 
 	parts := splitMessage(text, 4000)
 	for i := 0; i < len(parts)-1; i++ {
@@ -115,8 +176,9 @@ func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, 
 	return msg
 }
 
-// handleKanbanCallback routes kanban_report callbacks.
-// Callback data format: kanban_report:PROJECT:days.
+// handleKanbanCallback routes kanban_board and kanban_report callbacks.
+// Callback data format: kanban_board:boardID:days (days 0 = ask) or
+// kanban_report:boardID:days.
 func (h *Handler) handleKanbanCallback(ctx context.Context, cq *tgbotapi.CallbackQuery, parts []string) {
 	_, _ = h.api.Request(tgbotapi.NewCallback(cq.ID, ""))
 
@@ -124,12 +186,12 @@ func (h *Handler) handleKanbanCallback(ctx context.Context, cq *tgbotapi.Callbac
 		return
 	}
 
-	projectKey := strings.ToUpper(parts[1])
-	if !validateProjectKey(projectKey) {
+	boardID, err := strconv.Atoi(parts[1])
+	if err != nil {
 		return
 	}
 	days, err := strconv.Atoi(parts[2])
-	if err != nil || days < 1 || days > kanbanMaxDays {
+	if err != nil || days < 0 || days > kanbanMaxDays {
 		return
 	}
 
@@ -137,7 +199,15 @@ func (h *Handler) handleKanbanCallback(ctx context.Context, cq *tgbotapi.Callbac
 	userID := cq.From.ID
 	h.states.Clear(chatID, userID)
 
-	h.sendMessage(h.handleKanbanReport(ctx, chatID, userID, projectKey, days))
+	switch parts[0] {
+	case "kanban_board":
+		h.sendMessage(h.handleKanbanBoard(ctx, chatID, userID, boardID, days))
+	case "kanban_report":
+		if days < 1 {
+			return
+		}
+		h.sendMessage(h.handleKanbanReport(ctx, chatID, userID, boardID, days))
+	}
 }
 
 // quoteJQLStrings renders a comma-separated list of quoted JQL string literals.
@@ -151,19 +221,20 @@ func quoteJQLStrings(items []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// kanbanDoneJQL selects issues likely completed within the period. The
-// "updated" bound is a safe superset: an issue completed within the period
-// always has updated within it; exact done time is re-checked via changelog.
-func kanbanDoneJQL(projectKey string, days int, doneStatuses []string) string {
+// kanbanDoneJQL adds period/status constraints on top of a board's own
+// filter. The "updated" bound is a safe superset: an issue completed within
+// the period always has updated within it; exact done time is re-checked via
+// changelog.
+func kanbanDoneJQL(days int, doneStatuses []string) string {
 	if len(doneStatuses) > 0 {
-		return fmt.Sprintf("project = %s AND status in (%s) AND updated >= -%dd ORDER BY updated DESC", projectKey, quoteJQLStrings(doneStatuses), days)
+		return fmt.Sprintf("status in (%s) AND updated >= -%dd ORDER BY updated DESC", quoteJQLStrings(doneStatuses), days)
 	}
-	return fmt.Sprintf("project = %s AND statusCategory = Done AND updated >= -%dd ORDER BY updated DESC", projectKey, days)
+	return fmt.Sprintf("statusCategory = Done AND updated >= -%dd ORDER BY updated DESC", days)
 }
 
-// kanbanWIPJQL selects issues currently in progress.
-func kanbanWIPJQL(projectKey string, doneStatuses []string) string {
-	jql := fmt.Sprintf("project = %s AND statusCategory = indeterminate", projectKey)
+// kanbanWIPJQL restricts a board query to issues currently in progress.
+func kanbanWIPJQL(doneStatuses []string) string {
+	jql := "statusCategory = indeterminate"
 	if len(doneStatuses) > 0 {
 		jql += fmt.Sprintf(" AND status not in (%s)", quoteJQLStrings(doneStatuses))
 	}
@@ -469,14 +540,14 @@ func average(values []float64) float64 {
 	return sum / float64(len(values))
 }
 
-func formatKanbanReport(lang locale.Lang, projectKey string, days int, issueTypeFilter []string, m *kanbanMetrics) string {
+func formatKanbanReport(lang locale.Lang, boardName string, days int, issueTypeFilter []string, m *kanbanMetrics) string {
 	var sb strings.Builder
 
 	// Header.
 	sb.WriteString("📊 *")
 	sb.WriteString(locale.T(lang, "kanban.report_title"))
 	sb.WriteString("*: ")
-	sb.WriteString(projectKey)
+	sb.WriteString(format.EscapeMarkdown(boardName))
 	sb.WriteString("\n🗓 _")
 	sb.WriteString(locale.T(lang, "kanban.period", days))
 	sb.WriteString("_\n")
