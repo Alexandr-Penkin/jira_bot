@@ -124,7 +124,7 @@ func (h *Handler) handleKanbanReport(ctx context.Context, chatID, userID int64, 
 		return nil
 	})
 	g.Go(func() error {
-		res, searchErr := h.jiraAPI.SearchBoardIssuesForReport(gctx, user, boardID, kanbanWIPJQL(user.DoneStatuses), kanbanIssueMax, user.AssigneeFieldID)
+		res, searchErr := h.jiraAPI.SearchBoardIssuesForReport(gctx, user, boardID, kanbanWIPJQL(), kanbanIssueMax, user.AssigneeFieldID)
 		if searchErr != nil {
 			return searchErr
 		}
@@ -210,38 +210,31 @@ func (h *Handler) handleKanbanCallback(ctx context.Context, cq *tgbotapi.Callbac
 	}
 }
 
-// quoteJQLStrings renders a comma-separated list of quoted JQL string literals.
-func quoteJQLStrings(items []string) string {
-	quoted := make([]string, 0, len(items))
-	for _, s := range items {
-		s = strings.ReplaceAll(s, `\`, `\\`)
-		s = strings.ReplaceAll(s, `"`, `\"`)
-		quoted = append(quoted, `"`+s+`"`)
-	}
-	return strings.Join(quoted, ", ")
-}
-
-// kanbanDoneJQL adds period/status constraints on top of a board's own
-// filter. The "updated" bound is a safe superset: an issue completed within
-// the period always has updated within it; exact done time is re-checked via
-// changelog.
+// kanbanDoneJQL adds period/category constraints on top of a board's own
+// filter. Status NAMES are deliberately kept out of the JQL: a globally
+// configured custom done-status may not exist in this board's project, and
+// Jira rejects unknown status names with a 400. We therefore filter by
+// status category (always valid) and let computeKanbanMetrics classify the
+// actual done set from the changelog. The "updated" bound is a safe superset
+// — an issue completed within the period always has updated within it.
+//
+// JQL statusCategory matches on the category NAME ("To Do"/"In Progress"/
+// "Done"), not the REST API key ("new"/"indeterminate"/"done").
 func kanbanDoneJQL(days int, doneStatuses []string) string {
+	scope := `statusCategory = "Done"`
 	if len(doneStatuses) > 0 {
-		return fmt.Sprintf("status in (%s) AND updated >= -%dd ORDER BY updated DESC", quoteJQLStrings(doneStatuses), days)
+		// A custom done-status may live in the "In Progress" category, so
+		// widen the net; Go re-checks the real done time per issue.
+		scope = `statusCategory in ("In Progress", "Done")`
 	}
-	// JQL statusCategory matches on the category NAME ("Done"), not the
-	// REST API key ("done").
-	return fmt.Sprintf(`statusCategory = "Done" AND updated >= -%dd ORDER BY updated DESC`, days)
+	return fmt.Sprintf(`%s AND updated >= -%dd ORDER BY updated DESC`, scope, days)
 }
 
-// kanbanWIPJQL restricts a board query to issues currently in progress.
-func kanbanWIPJQL(doneStatuses []string) string {
-	// "In Progress" is the JQL name of the indeterminate status category.
-	jql := `statusCategory = "In Progress"`
-	if len(doneStatuses) > 0 {
-		jql += fmt.Sprintf(" AND status not in (%s)", quoteJQLStrings(doneStatuses))
-	}
-	return jql + " ORDER BY created ASC"
+// kanbanWIPJQL restricts a board query to in-progress issues. No status
+// names (see kanbanDoneJQL); issues sitting in a custom done-status are
+// excluded in Go by computeKanbanMetrics.
+func kanbanWIPJQL() string {
+	return `statusCategory = "In Progress" ORDER BY created ASC`
 }
 
 type kanbanFlowStats struct {
@@ -397,6 +390,14 @@ func computeKanbanMetrics(doneIssues, wipIssues []jira.Issue, periodStart, now t
 			typeName = issue.Fields.IssueType.Name
 		}
 		if isFiltered && !filterSet[typeName] {
+			continue
+		}
+
+		// The done query may include "In Progress"-category issues (to catch
+		// custom done-statuses living in that category). Count only issues
+		// that are actually done now, so issueDoneTime's updated fallback
+		// never misfires on a still-open issue.
+		if statusCategory(issue, doneStatuses, holdStatuses) != "done" {
 			continue
 		}
 

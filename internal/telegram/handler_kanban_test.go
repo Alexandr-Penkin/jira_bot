@@ -88,6 +88,38 @@ func TestComputeKanbanMetrics_DoneTimeFallbackToUpdated(t *testing.T) {
 	assert.Empty(t, m.cycleHours) // no in-progress transition recorded
 }
 
+func TestComputeKanbanMetrics_CustomDoneInProgressCategory(t *testing.T) {
+	now := ts(t, "2026-06-10T00:00:00Z")
+	periodStart := now.AddDate(0, 0, -30)
+	doneStatuses := []string{"Подтверждение"}
+
+	// The done query (widened to "In Progress" category) returns both a
+	// custom-done issue and a genuinely-in-progress one.
+	done := []jira.Issue{
+		// Currently in a custom done-status that sits in the In Progress
+		// category — must count.
+		makeKanbanIssue("T-1", "Story", "Подтверждение", "indeterminate", "2026-05-20T00:00:00Z",
+			statusChange("2026-05-22T00:00:00Z", "To Do", "In Progress"),
+			statusChange("2026-05-25T00:00:00Z", "In Progress", "Подтверждение"),
+		),
+		// Still in progress, never reached a done status — must NOT count,
+		// even though it has a recent updated timestamp.
+		func() jira.Issue {
+			iss := makeKanbanIssue("T-2", "Story", "In Progress", "indeterminate", "2026-05-20T00:00:00Z",
+				statusChange("2026-05-23T00:00:00Z", "To Do", "In Progress"),
+			)
+			iss.Fields.Updated = "2026-06-01T00:00:00Z"
+			return iss
+		}(),
+	}
+
+	m := computeKanbanMetrics(done, nil, periodStart, now, nil, doneStatuses, nil, false)
+
+	assert.Equal(t, 1, m.throughput)
+	assert.Len(t, m.cycleHours, 1)
+	assert.InDelta(t, 72, m.cycleHours[0], 0.01) // 22nd -> 25th = 3 days
+}
+
 func TestComputeKanbanMetrics_WeeklyThroughputBuckets(t *testing.T) {
 	now := ts(t, "2026-06-29T00:00:00Z")
 	periodStart := now.AddDate(0, 0, -14)
@@ -193,23 +225,25 @@ func TestPercentile(t *testing.T) {
 }
 
 func TestKanbanDoneJQL(t *testing.T) {
+	// No custom done-statuses: tight to the Done category.
 	assert.Equal(t,
 		`statusCategory = "Done" AND updated >= -30d ORDER BY updated DESC`,
 		kanbanDoneJQL(30, nil))
 
+	// Custom done-statuses must NOT leak into the JQL as status names (they
+	// may not exist in the board's project); the net widens by category and
+	// Go classifies the real done set.
+	jql := kanbanDoneJQL(14, []string{"Подтверждение", "Закрыто"})
 	assert.Equal(t,
-		`status in ("Done", "Released \"v2\"") AND updated >= -14d ORDER BY updated DESC`,
-		kanbanDoneJQL(14, []string{"Done", `Released "v2"`}))
+		`statusCategory in ("In Progress", "Done") AND updated >= -14d ORDER BY updated DESC`,
+		jql)
+	assert.NotContains(t, jql, "Подтверждение")
 }
 
 func TestKanbanWIPJQL(t *testing.T) {
 	assert.Equal(t,
 		`statusCategory = "In Progress" ORDER BY created ASC`,
-		kanbanWIPJQL(nil))
-
-	assert.Equal(t,
-		`statusCategory = "In Progress" AND status not in ("Done") ORDER BY created ASC`,
-		kanbanWIPJQL([]string{"Done"}))
+		kanbanWIPJQL())
 }
 
 func TestFormatKanbanReport_Basic(t *testing.T) {
