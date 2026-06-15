@@ -1,6 +1,6 @@
 # SleepJiraBot
 
-Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issues, get notifications, run sprint reports, schedule automated JQL reports, and get reminders from your calendar feed — all from Telegram.
+Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issues, get notifications, run sprint and kanban flow reports, schedule automated JQL reports, and get reminders from your calendar feed — all from Telegram.
 
 ## Features
 
@@ -10,6 +10,7 @@ Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issue
 - **Instant create (`/createfast`)** — turn any text or photo/file caption into a Jira issue with the attachment uploaded, Epic selection, and one-tap confirmation. Any plain message is treated as a `/createfast` shortcut
 - **Subscriptions** — real-time notifications on issue/project changes via polling and signed Jira webhooks (HMAC-SHA256)
 - **Sprint reports** — view sprint boards and progress
+- **Kanban flow reports** — board-level flow metrics (throughput, cycle/lead time, WIP, work item age, flow efficiency) with 7/14/30-day periods; multi-board project selection; respects custom done/hold statuses from Profile
 - **Scheduled reports** — cron-based JQL/sprint reports delivered to chats
 - **Daily standups** — quick view of assigned issues for you or teammates, plus a scheduled daily standup subscription with timezone support
 - **Calendar reminders** — subscribe an iCal/ICS "secret address" (Google/Outlook/Apple) from Profile → 📅 Calendar; the bot polls the feed, expands recurring events, and DMs you "new", "changed", and "starts in N min" reminders with a configurable lead time
@@ -34,6 +35,7 @@ Telegram bot for Jira Cloud integration. Authenticate via OAuth 2.0, track issue
 | `/create <PROJECT> <Type> \| <Summary> \| <Description>` | Quick-create issue |
 | `/createfast [summary]` | Instant create — text or photo/file with caption becomes an issue with attachment |
 | `/sprint [PROJECT] [BOARD] [SPRINT]` | Sprint board |
+| `/kanban [PROJECT] [DAYS]` | Kanban flow report (throughput, cycle time, WIP) |
 | `/filters` | Jira saved filters |
 | `/watch` / `/unwatch` | Subscribe/unsubscribe to changes |
 | `/subscriptions` | List active subscriptions |
